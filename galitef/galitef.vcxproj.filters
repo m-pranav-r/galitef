@@ -19,4 +19,19 @@
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="gltf\parser.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="app\app.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shader\shader.frag" />
+    <None Include="shader\shader.vert" />
+    <None Include="shader\compile.bat">
+      <Filter>Source Files</Filter>
+    </None>
+  </ItemGroup>
 </Project>
