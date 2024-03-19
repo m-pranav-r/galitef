@@ -5,7 +5,7 @@ layout(location = 1) in vec3 normal;
 layout(location = 2) in vec2 texCoord;
 layout(location = 3) in vec3 worldPos;
 
-layout(binding = 2) uniform sampler2D baseColor;
+layout(binding = 2) uniform sampler2D baseColorTex;
 layout(binding = 3) uniform sampler2D metallicRoughness;
 layout(binding = 4) uniform sampler2D normals;
 layout(binding = 5) uniform sampler2D occlusion;
@@ -29,13 +29,16 @@ void main(){
 	vec4 baseColor;
 	vec3 f0 = vec3(0.0);
 
+	vec3 mapNormal = texture(normals, texCoord).rgb;
+	mapNormal = normalize(mapNormal * 2.0 - 1.0);
+
 	perceptualRoughness = mat.roughnessFactor;
 	metallic = mat.metallicFactor;
 
 	vec4 mrSample = texture(metallicRoughness, texCoord);
 	perceptualRoughness *= mrSample.g;
 	metallic *= mrSample.b;
-	baseColor = mat.baseColorFactor;
+	baseColor = texture(baseColorTex, texCoord);
 
 	diffuseColor = baseColor.rgb * (vec3(1.0) - f0);
 	diffuseColor *= 1.0 - metallic;
@@ -50,9 +53,9 @@ void main(){
 	vec3 specularEnvironmentR0 = specularColor.rbg;
 	vec3 specularEnvironmantR90 = vec3(1.0, 1.0, 1.0) * reflectance90;
 
-	vec3 n = normal;
-	vec3 v = normalize(vec3(0.0) - worldPos);
-	vec3 l = normalize(vec3(0.0, 1.0, 0.0));							//light direction!!
+	vec3 n = mapNormal;
+	vec3 v = normalize(vec3(0.0, 0.0, 0.0) - worldPos);
+	vec3 l = normalize(vec3(1.0, 0.0, 1.0));							//light direction!!
 	vec3 h = normalize(l+v);
 	vec3 reflection = -normalize(reflect(v, n));
 	reflection.y *= -1.0f;
@@ -79,11 +82,10 @@ void main(){
 	vec3 diffuseContrib = (1.0 - F) * diffuseColor / M_PI;
 	vec3 specContrib = F * G * D / (4.0 * NdotL * NdotV);
 
-	vec3 color = NdotL * u_LightColor * (diffuseColor + specContrib);
-
 	//ADD OCCLUSIVE SUPPORT LATER
 
-	//ADD EMISSIVE SUPPORT LATER
+	vec3 emissiveColor = texture(emissive, texCoord).rgb;
+	vec3 color = NdotL * u_LightColor * (diffuseColor + specContrib) + emissiveColor;
 
 	outColor = vec4(color, 1.0);
 }

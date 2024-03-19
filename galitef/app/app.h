@@ -1778,7 +1778,7 @@ private:
 		renderPassInfo.renderArea.extent = swapChainExtent;
 
 		std::array<VkClearValue, 2>clearValues{};
-		clearValues[0].color = { {0.0f, 0.0f, 0.0f, 1.0f} };
+		clearValues[0].color = { {0.5f, 0.5f, 0.5f, 1.0f} };
 		clearValues[1].depthStencil = { 1.0f, 0 };
 		renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
 		renderPassInfo.pClearValues = clearValues.data();
@@ -1905,7 +1905,8 @@ private:
 		auto currentTime = std::chrono::high_resolution_clock::now();
 		float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 		UniformBufferObject ubo{};
-		ubo.model = glm::rotate(glm::scale(glm::mat4(1.0f), glm::vec3(100.0f)), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+		//glm::rotate(ubo.model, glm::radians(90.0f), glm::vec3(1.0, 0.0, 0.0));
+		ubo.model = glm::rotate(glm::rotate(glm::scale(glm::mat4(1.0f), glm::vec3(100.0f)), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f)), glm::radians(90.0f), glm::vec3(1.0, 0.0, 0.0));
 		ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 		ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.0f);
 		ubo.proj[1][1] *= -1;

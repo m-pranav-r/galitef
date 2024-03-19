@@ -34,5 +34,3 @@ int main() {
 
 	return EXIT_SUCCESS;
 }
-
-//"./models/BoomBox.glb"
