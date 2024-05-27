@@ -15,11 +15,13 @@ layout(location = 0) out vec3 fragPos;
 layout(location = 1) out vec3 fragNormal;
 layout(location = 2) out vec2 fragTexCoord;
 layout(location = 3) out vec3 fragWorldPos;
+layout(location = 4) out mat4 modelMatrix;
 
 void main(){
 	gl_Position = ubo.proj * ubo.view * ubo.model * vec4(pos, 1.0);
 	fragPos = pos;
 	fragNormal = normal;
 	fragTexCoord = texCoord;
-	fragWorldPos = vec4(ubo.proj * ubo.view * ubo.model * vec4(pos, 1.0)).xyz;
+	fragWorldPos = vec4(ubo.model * vec4(pos, 1.0)).xyz;
+	modelMatrix = ubo.model;
 }

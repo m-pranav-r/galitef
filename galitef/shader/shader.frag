@@ -4,6 +4,7 @@ layout(location = 0) in vec3 pos;
 layout(location = 1) in vec3 normal;
 layout(location = 2) in vec2 texCoord;
 layout(location = 3) in vec3 worldPos;
+layout(location = 4) in mat4 modelMatrix;
 
 layout(binding = 2) uniform sampler2D baseColorTex;
 layout(binding = 3) uniform sampler2D metallicRoughness;
@@ -15,77 +16,103 @@ layout (set = 0, binding = 1) uniform Material {
 	uniform float roughnessFactor;
 	uniform float metallicFactor;
 	uniform vec4 baseColorFactor;
-	//uniform float alphaRoughness;
 } mat;
 
 layout(location = 0) out vec4 outColor;
 
-const float M_PI = 3.141592653589793;
+const float M_PI = 3.14159265359;
+
+float D_GGX(vec3 n, vec3 h, float roughness){
+	float alpha = roughness * roughness;
+	float alpha_squared = alpha * alpha;
+	float NdotH = max(dot(n, h), 0.0);
+	float NdotH2 = NdotH * NdotH;
+
+	float num = alpha_squared;
+	float denom = (NdotH2 * (alpha_squared - 1.0) + 1.0);
+	denom = M_PI * denom * denom;
+
+	return num / denom;
+}
+
+float G_SchlickGGX(float NdotV, float roughness){
+	float r = roughness + 1.0;
+	float k = (r * r) / 8.0;
+
+	float num = NdotV;
+	float denom = NdotV * (1.0 - k) + k;
+
+	return num / denom;
+}
+
+float G_Smith(vec3 n, vec3 v, vec3 l, float roughness){
+	float NdotV = max(dot(n, v), 0.0);
+	float NdotL = max(dot(n, l), 0.0);
+	float ggx2 = G_SchlickGGX(NdotV, roughness);
+	float ggx1 = G_SchlickGGX(NdotL, roughness);
+
+	return ggx1 * ggx2;
+}
+
+vec3 F_Schlick(float cosTheta, vec3 F0){
+	float term = clamp(1 - cosTheta, 0.0, 1.0);
+	float term_squared = term * term;
+	return F0 + (1 - F0) * term_squared * term_squared * term;
+}
 
 void main(){
-	float perceptualRoughness;
-	float metallic;
-	vec3 diffuseColor;
-	vec4 baseColor;
-	vec3 f0 = vec3(0.0);
-
-	vec3 mapNormal = texture(normals, texCoord).rgb;
-	mapNormal = normalize(mapNormal * 2.0 - 1.0);
-
-	perceptualRoughness = mat.roughnessFactor;
-	metallic = mat.metallicFactor;
-
+	vec3 baseColor = pow(texture(baseColorTex, texCoord).rgb, vec3(2.2));
 	vec4 mrSample = texture(metallicRoughness, texCoord);
-	perceptualRoughness *= mrSample.g;
-	metallic *= mrSample.b;
-	baseColor = texture(baseColorTex, texCoord);
+	float roughness = mrSample.g;
+	float metallic = mrSample.b;
+	float ao = texture(occlusion, texCoord).r;
 
-	diffuseColor = baseColor.rgb * (vec3(1.0) - f0);
-	diffuseColor *= 1.0 - metallic;
+	vec3 F0 = mix(vec3(0.04), baseColor, metallic);
 
-	float alphaRoughness = perceptualRoughness * perceptualRoughness;
+	//vec3 n = normalize(texture(normals, texCoord).rgb * 2.0 - 1.0);
+	vec3 n = normalize(normal);
+	vec3 viewVector = vec4(modelMatrix * vec4(2.0, 2.0, 2.0, 1.0)).xyz;
+	vec3 v = normalize(viewVector - worldPos);
 
-	vec3 specularColor = mix(f0, baseColor.rgb, metallic);
+	vec3 Lo = vec3(0.0);
+	vec3 lights[4] = vec3[4](
+							vec3(-10.0,  10.0,  10.0),  
+							vec3( 10.0,  10.0,  10.0), 
+							vec3(-10.0, -10.0,  10.0),
+							vec3( 10.0, -10.0,  10.0)
+					);
+	//per light shit
+	for(int i = 0; i < 3; i++){
+		//vec3 lightVector = -vec4(modelMatrix * vec4(lights[i], 1.0)).xyz;
+		vec3 l = normalize(lights[i] - worldPos);
+		vec3 h = normalize(l + v);
 
-	float reflectance0 = max(max(specularColor.r, specularColor.g), specularColor.b);
+		float distance = length(lights[i] - worldPos);
+		float attenuation = 1.0 / (distance * distance);
+		vec3 radiance = vec3(300.0) * attenuation;
 
-	float reflectance90 = clamp(reflectance0 * 25.0, 0.0, 1.0);
-	vec3 specularEnvironmentR0 = specularColor.rbg;
-	vec3 specularEnvironmantR90 = vec3(1.0, 1.0, 1.0) * reflectance90;
+		//calculate brdf terms
+		float D = D_GGX(n, h, roughness);
+		float G = G_Smith(n, v, l, roughness);
+		vec3 F = F_Schlick(clamp(dot(h, v), 0.0, 1.0), F0);
 
-	vec3 n = mapNormal;
-	vec3 v = normalize(vec3(0.0, 0.0, 0.0) - worldPos);
-	vec3 l = normalize(vec3(1.0, 0.0, 1.0));							//light direction!!
-	vec3 h = normalize(l+v);
-	vec3 reflection = -normalize(reflect(v, n));
-	reflection.y *= -1.0f;
+		vec3 numer = D * G * F;
+		float denom = 4 * max(dot(n, v), 0.0) * max(dot(n, l), 0.0) + 0.0001;
+		vec3 specular = numer / denom;
 
-	float NdotL = clamp(dot(n, l), 0.001, 1.0);
-	float NdotV = clamp(abs(dot(n, v)), 0.001, 1.0);
-	float NdotH = clamp(dot(n, h), 0.0, 1.0);
-	float LdotH = clamp(dot(l, h), 0.0, 1.0);
-	float VdotH = clamp(dot(v, h), 0.0, 1.0);
+		vec3 kS = F;
+		vec3 kD = vec3(1.0) - kS;
+		kD *= 1.0 - metallic;
 
-	vec3 F = vec3(reflectance0 + (reflectance90 - reflectance0)) * pow(clamp(1.0 - VdotH, 0.0, 1.0), 5.0);
+		Lo += ((kD * baseColor / M_PI) + specular) * radiance * max(dot(n, l), 0.0);
+	}
+	
+	vec3 ambient = vec3(0.03) * baseColor * ao;
+	vec3 color = ambient + Lo;
 
-	float attenuationL = 2.0 * NdotL / (NdotL + sqrt(alphaRoughness * alphaRoughness + (1.0 - alphaRoughness * alphaRoughness) * (NdotL * NdotL)));
-	float attenuationV = 2.0 * NdotV / (NdotV + sqrt(alphaRoughness * alphaRoughness + (1.0 - alphaRoughness * alphaRoughness) * (NdotV * NdotV)));
-
-	float G = attenuationL * attenuationV;
-
-	float roughnessSq = alphaRoughness * alphaRoughness;
-	float f = (NdotH * roughnessSq - NdotH) * NdotH + 1.0;
-	float D = roughnessSq / (M_PI * f * f);
-
-	const vec3 u_LightColor = vec3(1.0);
-
-	vec3 diffuseContrib = (1.0 - F) * diffuseColor / M_PI;
-	vec3 specContrib = F * G * D / (4.0 * NdotL * NdotV);
-
-	//ADD OCCLUSIVE SUPPORT LATER
-
-	vec3 emissiveColor = texture(emissive, texCoord).rgb;
-	vec3 color = NdotL * u_LightColor * (diffuseColor + specContrib) + emissiveColor;
+	color = color / (color + vec3(1.0));
+	color = pow(color, vec3(1.0/2.2));
 
 	outColor = vec4(color, 1.0);
+
 }

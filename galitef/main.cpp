@@ -1,18 +1,6 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
-#ifndef GLM_H
-
-#define GLM_H
-#define GLM_FORCE_RADIANS
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#define GLM_ENABLE_EXPERIMENTAL
-#include <glm.hpp>
-#include <gtc/matrix_transform.hpp>
-#include <gtx/hash.hpp>
-
-#endif
-
 #ifndef PARSER_H
 #define PARSER_H
 #include "gltf/parser.h"
@@ -23,7 +11,7 @@
 int main() {
 	try {
 		GLTFParser model;
-		model.parse("./models/BoomBox.glb");
+		model.parse("./models/WaterBottle.glb");
 		GalitefApp app(800, 600, model.model);
 		app.run();
 	}

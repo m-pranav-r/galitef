@@ -12,13 +12,6 @@
 #include <gtx/hash.hpp>
 #endif
 
-/*
-#ifndef STB_H
-#define STB_IMAGE_IMPLEMENTATION
-#include <stb_image.h>
-#endif
-*/
-
 #ifndef PARSER_H
 #define PARSER_H
 #include "../gltf/parser.h"
@@ -323,7 +316,7 @@ private:
 
 	VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats) {
 		for (const auto& availableFormat : availableFormats) {
-			if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+			if (availableFormat.format == VK_FORMAT_R16G16B16A16_SFLOAT && availableFormat.colorSpace == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT) {
 				return availableFormat;
 			}
 		}
@@ -473,7 +466,7 @@ private:
 		createInfo.imageExtent = extent;
 		createInfo.presentMode = presentMode;
 		createInfo.imageFormat = surfaceFormat.format;
-		createInfo.imageColorSpace = surfaceFormat.colorSpace;
+		createInfo.imageColorSpace = surfaceFormat.colorSpace;// surfaceFormat.colorSpace;
 		createInfo.imageArrayLayers = 1;
 		createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
@@ -1906,7 +1899,7 @@ private:
 		float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 		UniformBufferObject ubo{};
 		//glm::rotate(ubo.model, glm::radians(90.0f), glm::vec3(1.0, 0.0, 0.0));
-		ubo.model = glm::rotate(glm::rotate(glm::scale(glm::mat4(1.0f), glm::vec3(100.0f)), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f)), glm::radians(90.0f), glm::vec3(1.0, 0.0, 0.0));
+		ubo.model = glm::rotate(glm::rotate(glm::scale(glm::mat4(1.0f), glm::vec3(10.0f)), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f)), glm::radians(90.0f), glm::vec3(1.0, 0.0, 0.0));
 		ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 		ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.0f);
 		ubo.proj[1][1] *= -1;
@@ -1983,6 +1976,8 @@ private:
 		if (isDebugEnv) {
 			extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 		}
+
+		extensions.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
 
 		return extensions;
 	}
