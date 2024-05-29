@@ -1,6 +1,6 @@
 #version 450
 
-#extension GL_EXT_debug_printf : enable
+//#extension GL_EXT_debug_printf : enable
 
 layout(location = 0) in vec3 pos;
 layout(location = 1) in vec3 normal;
@@ -71,6 +71,7 @@ void main(){
 	float roughness = mat.roughnessFactor * mrSample.g;
 	float metallic = mat.metallicFactor * mrSample.b;
 	float ao = texture(occlusion, texCoord).r;
+	vec3 emissiveColor = pow(texture(emissive, texCoord).rgb, vec3(2.2));
 
 	vec3 F0 = mix(vec3(0.04), baseColor, metallic);
 
@@ -105,16 +106,16 @@ void main(){
 	//per light shit
 	for(int i = 0; i < 8; i++){
 		vec3 l = normalize(lights[i] - worldPos);
-		vec3 h = normalize(l + v);
+		vec3 h = normalize(v + l);
 
 		float distance = length(lights[i] - worldPos);
 		float attenuation = 1.0 / (distance * distance);
-		vec3 radiance = vec3(300.0) * attenuation;
+		vec3 radiance = vec3(100.0) * attenuation;
 
 		//calculate brdf terms
 		float D = D_GGX(n, h, roughness);
 		float G = G_Smith(n, v, l, roughness);
-		vec3 F = F_Schlick(clamp(dot(h, v), 0.0, 1.0), F0);
+		vec3 F = F_Schlick(max(dot(h, v), 0.0), F0);
 
 		vec3 numer = D * G * F;
 		float denom = 4 * max(dot(n, v), 0.0) * max(dot(n, l), 0.0) + 0.0001;
@@ -127,10 +128,8 @@ void main(){
 		Lo += ((kD * baseColor / M_PI) + specular) * radiance * max(dot(n, l), 0.0);
 	}
 	
-	//vec3 ambient = vec3(0.03) * baseColor * ao;
-	//vec3 color = ambient + Lo;
-
-	vec3 color = Lo;
+	vec3 ambient = vec3(0.03) * baseColor * ao;
+	vec3 color = ambient + Lo + emissiveColor;
 
 	color = color / (color + vec3(1.0));
 	color = pow(color, vec3(1.0/2.2));
