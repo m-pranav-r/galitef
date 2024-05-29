@@ -1,10 +1,12 @@
 #version 450
 
+#extension GL_EXT_debug_printf : enable
+
 layout(location = 0) in vec3 pos;
 layout(location = 1) in vec3 normal;
 layout(location = 2) in vec2 texCoord;
 layout(location = 3) in vec3 worldPos;
-layout(location = 4) in mat4 modelMatrix;
+layout(location = 4) in vec3 camPos;
 
 layout(binding = 2) uniform sampler2D baseColorTex;
 layout(binding = 3) uniform sampler2D metallicRoughness;
@@ -62,28 +64,46 @@ vec3 F_Schlick(float cosTheta, vec3 F0){
 
 void main(){
 	vec3 baseColor = pow(texture(baseColorTex, texCoord).rgb, vec3(2.2));
+	baseColor.x *= mat.baseColorFactor.x;
+	baseColor.y *= mat.baseColorFactor.y;
+	baseColor.z *= mat.baseColorFactor.z;
 	vec4 mrSample = texture(metallicRoughness, texCoord);
-	float roughness = mrSample.g;
-	float metallic = mrSample.b;
+	float roughness = mat.roughnessFactor * mrSample.g;
+	float metallic = mat.metallicFactor * mrSample.b;
 	float ao = texture(occlusion, texCoord).r;
 
 	vec3 F0 = mix(vec3(0.04), baseColor, metallic);
 
-	//vec3 n = normalize(texture(normals, texCoord).rgb * 2.0 - 1.0);
 	vec3 n = normalize(normal);
-	vec3 viewVector = vec4(modelMatrix * vec4(2.0, 2.0, 2.0, 1.0)).xyz;
-	vec3 v = normalize(viewVector - worldPos);
+	vec3 v = normalize(camPos - worldPos);
 
 	vec3 Lo = vec3(0.0);
-	vec3 lights[4] = vec3[4](
-							vec3(-10.0,  10.0,  10.0),  
-							vec3( 10.0,  10.0,  10.0), 
-							vec3(-10.0, -10.0,  10.0),
-							vec3( 10.0, -10.0,  10.0)
+	/*
+	vec3 lights[8] = vec3[8](
+							0.5 * vec3(-10.0, 10.0, 10.0),
+							0.5 * vec3( 10.0,-10.0, 10.0),
+							0.5 * vec3( 10.0, 10.0,-10.0),
+							0.5 * vec3( 10.0,-10.0,-10.0),
+							0.5 * vec3(-10.0, 10.0,-10.0),
+							0.5 * vec3(-10.0,-10.0, 10.0),
+							0.5 * vec3(-10.0,-10.0,-10.0),
+							0.5 * vec3( 10.0, 10.0, 10.0)
 					);
+	*/
+	vec3 lights[8];
+	lights[0] = 0.5 * vec3(-10.0, 10.0, 10.0);
+	lights[1] = 0.5 * vec3( 10.0,-10.0, 10.0);
+	lights[2] = 0.5 * vec3( 10.0, 10.0,-10.0);
+	lights[3] = 0.5 * vec3( 10.0,-10.0,-10.0);
+	lights[4] = 0.5 * vec3(-10.0, 10.0,-10.0);
+	lights[5] = 0.5 * vec3(-10.0,-10.0, 10.0);
+	lights[6] = 0.5 * vec3(-10.0,-10.0,-10.0);
+	lights[7] = 0.5 * vec3( 10.0, 10.0, 10.0);
+
+	//debugPrintfEXT("Camera position in shader: %f %f %f\n", camPos.x, camPos.y, camPos.z);
+
 	//per light shit
-	for(int i = 0; i < 3; i++){
-		//vec3 lightVector = -vec4(modelMatrix * vec4(lights[i], 1.0)).xyz;
+	for(int i = 0; i < 8; i++){
 		vec3 l = normalize(lights[i] - worldPos);
 		vec3 h = normalize(l + v);
 
@@ -107,8 +127,10 @@ void main(){
 		Lo += ((kD * baseColor / M_PI) + specular) * radiance * max(dot(n, l), 0.0);
 	}
 	
-	vec3 ambient = vec3(0.03) * baseColor * ao;
-	vec3 color = ambient + Lo;
+	//vec3 ambient = vec3(0.03) * baseColor * ao;
+	//vec3 color = ambient + Lo;
+
+	vec3 color = Lo;
 
 	color = color / (color + vec3(1.0));
 	color = pow(color, vec3(1.0/2.2));

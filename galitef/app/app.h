@@ -10,6 +10,7 @@
 #include <glm.hpp>
 #include <gtc/matrix_transform.hpp>
 #include <gtx/hash.hpp>
+#include <glm/gtx/quaternion.hpp>
 #endif
 
 #ifndef PARSER_H
@@ -77,6 +78,7 @@ struct UniformBufferObject {
 	glm::mat4 model;
 	glm::mat4 view;
 	glm::mat4 proj;
+	glm::vec3 camPos;
 };
 
 struct MaterialBufferObject {
@@ -106,7 +108,9 @@ const std::vector<const char*> validationlayers = {
 };
 
 const std::vector<const char*> deviceExtensions = {
-	VK_KHR_SWAPCHAIN_EXTENSION_NAME
+	VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+	VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
+	VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME
 };
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
@@ -127,6 +131,63 @@ static std::vector<char> readFile(const std::string& fileName) {
 
 	return buffer;
 }
+
+class TemporaryCamera {
+public:
+	glm::vec3 velocity;
+	glm::vec3 position;
+	float pitch = 0.f;
+	float yaw = 0.f;
+
+	double prevFrameXPos = -1, prevFrameYPos = -1;
+	
+	glm::mat4 getViewMatrix() {
+		glm::mat4 cameraTranslation = glm::translate(glm::mat4(1.0f), position);
+		glm::mat4 cameraRotation = getRotationMatrix();
+		return glm::inverse(cameraTranslation * cameraRotation);
+	}
+	glm::mat4 getRotationMatrix() {
+		glm::quat pitchRotation = glm::angleAxis(pitch, glm::vec3{ 1.f, 0.f, 0.f });
+		glm::quat yawRotation = glm::angleAxis(yaw, glm::vec3({ 0.f, -1.f, 0.f }));
+
+		return glm::mat4_cast(yawRotation) * glm::mat4_cast(pitchRotation);
+	}
+
+	void processGLFWKeyboardEvent(GLFWwindow* window, int key, int scancode, int action, int mods) {
+		if (action == GLFW_PRESS) {
+			if (key == GLFW_KEY_W) velocity.z = -1;
+			if (key == GLFW_KEY_A) velocity.x = -1;
+			if (key == GLFW_KEY_S) velocity.z = 1;
+			if (key == GLFW_KEY_D) velocity.x = 1;
+		}
+
+		if (action == GLFW_RELEASE) {
+			if (key == GLFW_KEY_W) velocity.z = 0;
+			if (key == GLFW_KEY_A) velocity.x = 0;
+			if (key == GLFW_KEY_S) velocity.z = 0;
+			if (key == GLFW_KEY_D) velocity.x = 0;
+		}
+	}
+
+	void processGLFWMouseEvent(GLFWwindow* window, double x, double y) {
+		if (prevFrameXPos == -1) {
+			prevFrameXPos = x;
+			prevFrameYPos = y;
+		}
+		yaw += (x - prevFrameXPos) / 2000.f;
+		pitch -= (y - prevFrameYPos) / 2000.f;
+
+		prevFrameXPos = x;
+		prevFrameYPos = y;
+	}
+
+	void update() {
+		glm::mat4 cameraRotation = getRotationMatrix();
+		position += glm::vec3(cameraRotation * glm::vec4(velocity * 0.005f, 0.f));
+	}
+};
+
+TemporaryCamera camera;
 
 class GalitefApp {
 public:
@@ -209,6 +270,15 @@ private:
 		window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
 		glfwSetWindowUserPointer(window, this);
 		glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
+
+		glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+		glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+		glfwSetKeyCallback(window, [](GLFWwindow* window, int key, int scancode, int action, int mods) {camera.processGLFWKeyboardEvent(window, key, scancode, action, mods); });
+		glfwSetCursorPosCallback(window, [](GLFWwindow* window, double x, double y) {camera.processGLFWMouseEvent(window, x, y); });
+		camera.velocity = glm::vec3(0.f);
+		camera.position = glm::vec3(2.f);
+		camera.pitch = 0;
+		camera.yaw = 0;
 	}
 
 	static void framebufferResizeCallback(GLFWwindow* window, int width, int height) {
@@ -252,7 +322,7 @@ private:
 		createDescriptorSets();
 		createCommandBuffers();
 		createSyncObjects();
-		std::cout << "done!n\n";
+		std::cout << "done!\n";
 	}
 
 	void createInstance() {
@@ -263,10 +333,10 @@ private:
 		VkApplicationInfo appInfo{};
 		appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
 		appInfo.pApplicationName = "Hello Triangle";
-		appInfo.applicationVersion = VK_MAKE_API_VERSION(0, 1, 0, 0);
+		appInfo.applicationVersion = VK_API_VERSION_1_3;
 		appInfo.pEngineName = "No Engine";
-		appInfo.engineVersion = VK_MAKE_API_VERSION(0, 1, 0, 0);
-		appInfo.apiVersion = VK_API_VERSION_1_0;
+		appInfo.engineVersion = VK_API_VERSION_1_3;
+		appInfo.apiVersion = VK_API_VERSION_1_3;
 
 		appInfo.pNext = nullptr;
 
@@ -316,7 +386,7 @@ private:
 
 	VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats) {
 		for (const auto& availableFormat : availableFormats) {
-			if (availableFormat.format == VK_FORMAT_R16G16B16A16_SFLOAT && availableFormat.colorSpace == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT) {
+			if (availableFormat.format == VK_FORMAT_R32G32B32A32_SFLOAT && availableFormat.colorSpace == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT) {
 				return availableFormat;
 			}
 		}
@@ -1771,7 +1841,7 @@ private:
 		renderPassInfo.renderArea.extent = swapChainExtent;
 
 		std::array<VkClearValue, 2>clearValues{};
-		clearValues[0].color = { {0.5f, 0.5f, 0.5f, 1.0f} };
+		clearValues[0].color = { {0.0f, 0.0f, 0.0f, 1.0f} };
 		clearValues[1].depthStencil = { 1.0f, 0 };
 		renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
 		renderPassInfo.pClearValues = clearValues.data();
@@ -1894,15 +1964,18 @@ private:
 
 	void updateUniformBuffer(uint32_t currentImage) {
 		static auto startTime = std::chrono::high_resolution_clock::now();
+		camera.update();
 
 		auto currentTime = std::chrono::high_resolution_clock::now();
 		float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 		UniformBufferObject ubo{};
 		//glm::rotate(ubo.model, glm::radians(90.0f), glm::vec3(1.0, 0.0, 0.0));
 		ubo.model = glm::rotate(glm::rotate(glm::scale(glm::mat4(1.0f), glm::vec3(10.0f)), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f)), glm::radians(90.0f), glm::vec3(1.0, 0.0, 0.0));
-		ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+		ubo.view = camera.getViewMatrix(); //;glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 		ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.0f);
 		ubo.proj[1][1] *= -1;
+		ubo.camPos = camera.position;
+		//std::cout << "Camera position in code  : " << camera.position.x << " " << camera.position.y << " " << camera.position.z << "\n";
 
 		memcpy(uniformBuffersMapped[currentFrame], &ubo, sizeof(ubo));
 
