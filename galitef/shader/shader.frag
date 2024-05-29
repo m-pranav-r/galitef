@@ -64,9 +64,11 @@ vec3 F_Schlick(float cosTheta, vec3 F0){
 
 void main(){
 	vec3 baseColor = pow(texture(baseColorTex, texCoord).rgb, vec3(2.2));
+	/*
 	baseColor.x *= mat.baseColorFactor.x;
 	baseColor.y *= mat.baseColorFactor.y;
 	baseColor.z *= mat.baseColorFactor.z;
+	*/
 	vec4 mrSample = texture(metallicRoughness, texCoord);
 	float roughness = mat.roughnessFactor * mrSample.g;
 	float metallic = mat.metallicFactor * mrSample.b;
