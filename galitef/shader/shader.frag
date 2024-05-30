@@ -7,6 +7,7 @@ layout(location = 1) in vec3 normal;
 layout(location = 2) in vec2 texCoord;
 layout(location = 3) in vec3 worldPos;
 layout(location = 4) in vec3 camPos;
+layout(location = 5) in mat3 TBN;
 
 layout(binding = 2) uniform sampler2D baseColorTex;
 layout(binding = 3) uniform sampler2D metallicRoughness;
@@ -64,11 +65,6 @@ vec3 F_Schlick(float cosTheta, vec3 F0){
 
 void main(){
 	vec3 baseColor = pow(texture(baseColorTex, texCoord).rgb, vec3(2.2));
-	/*
-	baseColor.x *= mat.baseColorFactor.x;
-	baseColor.y *= mat.baseColorFactor.y;
-	baseColor.z *= mat.baseColorFactor.z;
-	*/
 	vec4 mrSample = texture(metallicRoughness, texCoord);
 	float roughness = mat.roughnessFactor * mrSample.g;
 	float metallic = mat.metallicFactor * mrSample.b;
@@ -77,11 +73,15 @@ void main(){
 
 	vec3 F0 = mix(vec3(0.04), baseColor, metallic);
 
-	vec3 n = normalize(normal);
+	//vec3 n = normalize(normal);
+	vec3 n = texture(normals, texCoord).rgb;
+	n = n * 2.0 + 1.0;
+	n = normalize(TBN * n);
+	
 	vec3 v = normalize(camPos - worldPos);
 
 	vec3 Lo = vec3(0.0);
-	/*
+
 	vec3 lights[8] = vec3[8](
 							0.5 * vec3(-10.0, 10.0, 10.0),
 							0.5 * vec3( 10.0,-10.0, 10.0),
@@ -92,17 +92,6 @@ void main(){
 							0.5 * vec3(-10.0,-10.0,-10.0),
 							0.5 * vec3( 10.0, 10.0, 10.0)
 					);
-	*/
-	vec3 lights[8];
-	lights[0] = 0.5 * vec3(-10.0, 10.0, 10.0);
-	lights[1] = 0.5 * vec3( 10.0,-10.0, 10.0);
-	lights[2] = 0.5 * vec3( 10.0, 10.0,-10.0);
-	lights[3] = 0.5 * vec3( 10.0,-10.0,-10.0);
-	lights[4] = 0.5 * vec3(-10.0, 10.0,-10.0);
-	lights[5] = 0.5 * vec3(-10.0,-10.0, 10.0);
-	lights[6] = 0.5 * vec3(-10.0,-10.0,-10.0);
-	lights[7] = 0.5 * vec3( 10.0, 10.0, 10.0);
-
 	//debugPrintfEXT("Camera position in shader: %f %f %f\n", camPos.x, camPos.y, camPos.z);
 
 	//per light shit
@@ -137,5 +126,4 @@ void main(){
 	color = pow(color, vec3(1.0/2.2));
 
 	outColor = vec4(color, 1.0);
-
 }

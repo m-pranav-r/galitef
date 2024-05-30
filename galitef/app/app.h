@@ -41,6 +41,7 @@ bool isDebugEnv = false;
 struct Vertex {
 	glm::vec3 pos;
 	glm::vec3 normal;
+	glm::vec4 tangent;
 	glm::vec2 texCoord;
 
 	static VkVertexInputBindingDescription getBindingDescription() {
@@ -52,8 +53,8 @@ struct Vertex {
 		return bindingDescription;
 	}
 
-	static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions() {
-		std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
+	static std::array<VkVertexInputAttributeDescription, 4> getAttributeDescriptions() {
+		std::array<VkVertexInputAttributeDescription, 4> attributeDescriptions{};
 
 		attributeDescriptions[0].binding = 0;
 		attributeDescriptions[0].location = 0;
@@ -67,8 +68,13 @@ struct Vertex {
 
 		attributeDescriptions[2].binding = 0;
 		attributeDescriptions[2].location = 2;
-		attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
-		attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
+		attributeDescriptions[2].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+		attributeDescriptions[2].offset = offsetof(Vertex, tangent);
+
+		attributeDescriptions[3].binding = 0;
+		attributeDescriptions[3].location = 3;
+		attributeDescriptions[3].format = VK_FORMAT_R32G32_SFLOAT;
+		attributeDescriptions[3].offset = offsetof(Vertex, texCoord);
 
 		return attributeDescriptions;
 	}
@@ -1193,33 +1199,39 @@ private:
 
 			VkImage* textureImage = nullptr;// = &baseColorImage;
 			VkDeviceMemory* textureImageMemory = nullptr;// = &baseColorMemory;
+			VkFormat textureImageFormat;
 
 			switch (texture.type) {
 				case BASE:
 				{
 					textureImage = &baseColorImage;
 					textureImageMemory = &baseColorMemory;
+					textureImageFormat = VK_FORMAT_R8G8B8A8_SRGB;
 					break;
 				}
 				case METALLIC_ROUGHNESS:{
 					textureImage = &metallicRoughnessImage;
 					textureImageMemory = &metallicRoughnessMemory;
+					textureImageFormat = VK_FORMAT_R8G8B8A8_SRGB;
 					break;
 				}
 				case NORMAL: {
 					textureImage = &normalImage;
 					textureImageMemory = &normalMemory;
+					textureImageFormat = VK_FORMAT_R8G8B8A8_UNORM;
 					break;
 				}
 				case OCCLUSION:
 				{
 					textureImage = &occlusionImage;
 					textureImageMemory = &occlusionMemory;
+					textureImageFormat = VK_FORMAT_R8G8B8A8_SRGB;
 					break;
 				}
 				case EMISSIVE: {
 					textureImage = &emissiveImage;
 					textureImageMemory = &emissiveMemory;
+					textureImageFormat = VK_FORMAT_R8G8B8A8_SRGB;
 					break;
 				}
 			}
@@ -1229,7 +1241,7 @@ private:
 				texture.texHeight,
 				mipLevels,
 				VK_SAMPLE_COUNT_1_BIT,
-				VK_FORMAT_R8G8B8A8_SRGB,
+				textureImageFormat,
 				VK_IMAGE_TILING_OPTIMAL,
 				VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
 				VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
@@ -1449,7 +1461,7 @@ private:
 	void createTextureImageViews() {
 		baseColorImageView = createImageView(baseColorImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
 		metallicRoughnessImageView = createImageView(metallicRoughnessImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
-		normalImageView = createImageView(normalImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
+		normalImageView = createImageView(normalImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
 		occlusionImageView = createImageView(occlusionImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
 		emissiveImageView = createImageView(emissiveImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
 
@@ -1520,16 +1532,19 @@ private:
 	}
 
 	void loadModel() {
+		std::cout << "trying to load model...";
 		for (int i = 0; i < model.pos.size(); i++) {
 			Vertex vertex{};
 
 			vertex.pos = model.pos[i];
 			vertex.normal = model.normals[i];
+			vertex.tangent = model.tangents[i];
 			vertex.texCoord = model.texCoords[i];
 
 			vertices.push_back(vertex);
 		}
 		indices = &model.indices;
+		std::cout << " done!\n";
 	}
 
 	void createVertexBuffer() {

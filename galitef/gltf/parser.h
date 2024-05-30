@@ -69,6 +69,7 @@ public:
 	std::vector<std::uint32_t> indices;
 	std::vector<glm::vec3> pos;
 	std::vector<glm::vec3> normals;
+	std::vector<glm::vec4> tangents;
 	std::vector<glm::vec2> texCoords;
 	Material mat;
 };
@@ -180,6 +181,16 @@ public:
 							fastgltf::iterateAccessor<glm::vec3>(asset, accessor, [&](glm::vec3 index) {
 								model.normals[idx++] = index;
 								});
+						}
+						else if (attrib.first == "TANGENT") {
+							auto& accessor = asset.accessors[attrib.second];
+							model.tangents.resize(accessor.count);
+
+							std::size_t idx = 0;
+							fastgltf::iterateAccessor<glm::vec4>(asset, accessor, [&](glm::vec4 index) {
+								model.tangents[idx++] = index;
+								});
+							
 						}
 						else if (attrib.first == "POSITION") {
 							auto& accessor = asset.accessors[attrib.second];
