@@ -72,11 +72,14 @@ void main(){
 	vec3 emissiveColor = pow(texture(emissive, texCoord).rgb, vec3(2.2));
 
 	vec3 F0 = mix(vec3(0.04), baseColor, metallic);
+	
+	vec3 n = pow(texture(normals, texCoord).rgb, vec3(2.2));
+	//n = n * 2.0 + 1.0;
+	n = normalize(TBN * n);
 
 	//vec3 n = normalize(normal);
-	vec3 n = texture(normals, texCoord).rgb;
-	n = n * 2.0 + 1.0;
-	n = normalize(TBN * n);
+
+	//outColor = vec4(n, 1.0);
 	
 	vec3 v = normalize(camPos - worldPos);
 

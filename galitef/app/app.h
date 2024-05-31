@@ -165,6 +165,8 @@ public:
 			if (key == GLFW_KEY_A) velocity.x = -1;
 			if (key == GLFW_KEY_S) velocity.z = 1;
 			if (key == GLFW_KEY_D) velocity.x = 1;
+			if (key == GLFW_KEY_E) velocity.y = 1;
+			if (key == GLFW_KEY_Q) velocity.y = -1;
 		}
 
 		if (action == GLFW_RELEASE) {
@@ -172,6 +174,8 @@ public:
 			if (key == GLFW_KEY_A) velocity.x = 0;
 			if (key == GLFW_KEY_S) velocity.z = 0;
 			if (key == GLFW_KEY_D) velocity.x = 0;
+			if (key == GLFW_KEY_E) velocity.y = 0;
+			if (key == GLFW_KEY_Q) velocity.y = 0;
 		}
 	}
 

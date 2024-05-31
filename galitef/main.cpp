@@ -12,7 +12,7 @@ int main() {
 	try {
 		GLTFParser model;
 		model.parse("./models/WaterBottle.glb");
-		GalitefApp app(800, 600, model.model);
+		GalitefApp app(1280, 720, model.model);
 		app.run();
 	}
 	catch (const std::exception& e) {
