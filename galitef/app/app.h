@@ -308,7 +308,7 @@ private:
 		createImageViews();
 
 		//set pbr shit
-		createRenderPass();
+		//createRenderPass();
 
 		//set bindings and shit
 		createDescriptorSetLayout();
@@ -316,7 +316,7 @@ private:
 		createCommandPool();
 		createColorResources();
 		createDepthResources();
-		createFramebuffers();
+		//createFramebuffers();
 
 		//setup textures and samplers from file
 		createTextureImages();
@@ -605,6 +605,7 @@ private:
 		}
 	}
 
+	/*
 	void createRenderPass() {
 		VkAttachmentDescription colorAttachment{};
 		colorAttachment.format = swapChainImageFormat;
@@ -678,6 +679,7 @@ private:
 			throw std::runtime_error("failed to create render pass!");
 		}
 	}
+	*/
 
 	void createDescriptorSetLayout() {
 
@@ -864,6 +866,13 @@ private:
 			throw std::runtime_error("failed to create pipeline layout!");
 		}
 
+		VkPipelineRenderingCreateInfoKHR pipelineRenderingCreateInfo = {
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR,
+			.colorAttachmentCount = 1,
+			.pColorAttachmentFormats = &swapChainImageFormat,
+			.depthAttachmentFormat = findDepthFormat()
+		};
+
 		VkGraphicsPipelineCreateInfo pipelineInfo{};
 		pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
 		pipelineInfo.stageCount = 2;
@@ -877,7 +886,8 @@ private:
 		pipelineInfo.pColorBlendState = &colorBlending;
 		pipelineInfo.pDynamicState = &dynamicState;
 		pipelineInfo.layout = pipelineLayout;
-		pipelineInfo.renderPass = renderPass;
+		pipelineInfo.renderPass = NULL;
+		pipelineInfo.pNext = &pipelineRenderingCreateInfo;
 		pipelineInfo.subpass = 0;
 		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
 		pipelineInfo.basePipelineIndex = -1;
@@ -911,12 +921,17 @@ private:
 		deviceFeatures.samplerAnisotropy = VK_TRUE;
 		deviceFeatures.sampleRateShading = VK_TRUE;
 
+		VkPhysicalDeviceDynamicRenderingFeaturesKHR dynamiceRenderingFeatures = {
+			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR,
+			.dynamicRendering = VK_TRUE
+		};
+
 		VkDeviceCreateInfo createInfo{};
 		createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 		createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
 		createInfo.pQueueCreateInfos = queueCreateInfos.data();;
 		createInfo.pEnabledFeatures = &deviceFeatures;
-
+		createInfo.pNext = &dynamiceRenderingFeatures;
 		createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
 		createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
@@ -943,6 +958,7 @@ private:
 		}
 	}
 
+	/*
 	void createFramebuffers() {
 		swapChainFramebuffers.resize(swapChainImageViews.size());
 
@@ -967,6 +983,7 @@ private:
 			}
 		}
 	}
+	*/
 
 	void createCommandPool() {
 		QueueFamilyIndices queueFamilyIndices = findQueueFamilies(physicalDevice);
@@ -1852,20 +1869,63 @@ private:
 			throw std::runtime_error("failed to begin recording command buffer!");
 		}
 
-		VkRenderPassBeginInfo renderPassInfo{};
-		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-		renderPassInfo.renderPass = renderPass;
-		renderPassInfo.framebuffer = swapChainFramebuffers[imageIndex];
-		renderPassInfo.renderArea.offset = { 0, 0 };
-		renderPassInfo.renderArea.extent = swapChainExtent;
-
 		std::array<VkClearValue, 2>clearValues{};
 		clearValues[0].color = { {0.0f, 0.0f, 0.0f, 1.0f} };
 		clearValues[1].depthStencil = { 1.0f, 0 };
-		renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-		renderPassInfo.pClearValues = clearValues.data();
 
-		vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+		VkRenderingAttachmentInfoKHR colorAttachment = {
+			.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+			.imageView = swapChainImageViews[currentFrame],
+			.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
+			.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT,
+			.resolveImageView = swapChainImageViews[currentFrame],
+			.resolveImageLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+			.clearValue = clearValues[0]
+		};
+
+		VkRenderingAttachmentInfoKHR depthAttachment = {
+			.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+			.imageView = swapChainImageViews[currentFrame],
+			.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL_KHR,
+			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+			.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			.clearValue = clearValues[1]
+		};
+
+		/*
+		VkRenderingAttachmentInfoKHR colorResolveAttachment = {
+			.sType = VK_STRUCTURE_TYPE_RENDERING_AREA_INFO_KHR,
+			.imageView = swapChainImageViews[currentFrame],
+			.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL_KHR,
+			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+			.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			.clearValue = clearValues[1]
+		};
+		*/
+
+		VkMultisampledRenderToSingleSampledInfoEXT multisampledRenderingInfo = {
+			.sType = VK_STRUCTURE_TYPE_MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED_INFO_EXT,
+			.multisampledRenderToSingleSampledEnable = VK_TRUE,
+			.rasterizationSamples = VK_SAMPLE_COUNT_8_BIT
+		};
+
+		VkRenderingInfoKHR renderingInfo = {
+			.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR,
+			.pNext = &multisampledRenderingInfo,
+			.renderArea = {0, 0, swapChainExtent.width, swapChainExtent.height},
+			.layerCount = 1,
+			.colorAttachmentCount = 1,
+			.pColorAttachments = &colorAttachment,
+			.pDepthAttachment = &depthAttachment
+		};
+
+		vkCmdBeginRendering(commandBuffer, &renderingInfo);
+
+		//migrate rendering logic here
+
+
 		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
 		VkBuffer vertexBuffers[] = { vertexBuffer };
@@ -1888,7 +1948,8 @@ private:
 		vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
 		vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices->size()), 1, 0, 0, 0);
-		vkCmdEndRenderPass(commandBuffer);
+		
+		vkCmdEndRendering(commandBuffer);
 
 		if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
 			throw std::runtime_error("failed to record command buffer!");
@@ -2031,7 +2092,7 @@ private:
 		createImageViews();
 		createColorResources();
 		createDepthResources();
-		createFramebuffers();
+		//createFramebuffers();
 	}
 
 	bool checkValidationLayerSupport() {
