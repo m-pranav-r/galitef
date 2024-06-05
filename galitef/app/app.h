@@ -250,7 +250,7 @@ private:
 	VkImageView baseColorImageView, metallicRoughnessImageView, normalImageView, occlusionImageView, emissiveImageView;
 	VkSampler baseColorSampler, metallicRoughnessSampler, normalSampler, occlusionSampler, emissiveSampler;
 	VkDeviceMemory baseColorMemory, metallicRoughnessMemory, normalMemory, occlusionMemory, emissiveMemory;
-	VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
+	//VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
 
 	VkImage colorImage;
 	VkDeviceMemory colorImageMemory;
@@ -332,7 +332,7 @@ private:
 		createDescriptorSets();
 		createCommandBuffers();
 		createSyncObjects();
-		std::cout << "done!\n";
+		std::cout << "done!\n\n\n";
 	}
 
 	void createInstance() {
@@ -517,7 +517,7 @@ private:
 		for (const auto& device : physicalDevices) {
 			if (isDeviceSuitable(device)) {
 				physicalDevice = device;
-				msaaSamples = getMaxUsableSampleCount();
+				//msaaSamples = getMaxUsableSampleCount();
 				break;
 			}
 		}
@@ -821,9 +821,8 @@ private:
 		VkPipelineMultisampleStateCreateInfo multisampling{};
 		multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
 		multisampling.sampleShadingEnable = VK_FALSE;
-		multisampling.rasterizationSamples = msaaSamples;
-		multisampling.sampleShadingEnable = VK_TRUE;
-		multisampling.minSampleShading = .2f;
+		multisampling.alphaToCoverageEnable = VK_FALSE;
+		multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
 		VkPipelineColorBlendAttachmentState colorBlendAttachment{};
 		colorBlendAttachment.colorWriteMask =
@@ -1055,7 +1054,7 @@ private:
 			swapChainExtent.width,
 			swapChainExtent.height,
 			1,
-			msaaSamples,
+			VK_SAMPLE_COUNT_1_BIT,
 			depthFormat,
 			VK_IMAGE_TILING_OPTIMAL,
 			VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
@@ -1446,7 +1445,7 @@ private:
 			swapChainExtent.width,
 			swapChainExtent.height,
 			1,
-			msaaSamples,
+			VK_SAMPLE_COUNT_1_BIT,
 			colorFormat,
 			VK_IMAGE_TILING_OPTIMAL,
 			VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
@@ -1877,9 +1876,6 @@ private:
 			.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
 			.imageView = swapChainImageViews[currentFrame],
 			.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
-			.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT,
-			.resolveImageView = swapChainImageViews[currentFrame],
-			.resolveImageLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
 			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
 			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
 			.clearValue = clearValues[0]
@@ -1887,44 +1883,85 @@ private:
 
 		VkRenderingAttachmentInfoKHR depthAttachment = {
 			.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-			.imageView = swapChainImageViews[currentFrame],
+			.imageView = depthImageView,
 			.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL_KHR,
 			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
 			.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
 			.clearValue = clearValues[1]
-		};
-
-		/*
-		VkRenderingAttachmentInfoKHR colorResolveAttachment = {
-			.sType = VK_STRUCTURE_TYPE_RENDERING_AREA_INFO_KHR,
-			.imageView = swapChainImageViews[currentFrame],
-			.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL_KHR,
-			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-			.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-			.clearValue = clearValues[1]
-		};
-		*/
-
-		VkMultisampledRenderToSingleSampledInfoEXT multisampledRenderingInfo = {
-			.sType = VK_STRUCTURE_TYPE_MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED_INFO_EXT,
-			.multisampledRenderToSingleSampledEnable = VK_TRUE,
-			.rasterizationSamples = VK_SAMPLE_COUNT_8_BIT
 		};
 
 		VkRenderingInfoKHR renderingInfo = {
 			.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR,
-			.pNext = &multisampledRenderingInfo,
 			.renderArea = {0, 0, swapChainExtent.width, swapChainExtent.height},
 			.layerCount = 1,
 			.colorAttachmentCount = 1,
 			.pColorAttachments = &colorAttachment,
-			.pDepthAttachment = &depthAttachment
+			.pDepthAttachment = &depthAttachment,
 		};
 
+		//color image transition
+		VkImageMemoryBarrier colorImageStartTransitionBarrier = {
+			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+			.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+			.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+			.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.image = swapChainImages[currentFrame],
+			.subresourceRange = {
+				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+				.baseMipLevel = 0,
+				.levelCount = 1,
+				.baseArrayLayer = 0,
+				.layerCount = 1
+			}
+		};
+
+		vkCmdPipelineBarrier(
+			commandBuffer,
+			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+			0,
+			0,
+			nullptr,
+			0,
+			nullptr,
+			1,
+			&colorImageStartTransitionBarrier
+		);
+		
+		//depth image transition
+		VkImageMemoryBarrier depthImageStartTransitionBarrier = {
+			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+			.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+			.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+			.newLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.image = depthImage,
+			.subresourceRange = {
+				.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+				.baseMipLevel = 0,
+				.levelCount = 1,
+				.baseArrayLayer = 0,
+				.layerCount = 1
+			}
+		};
+
+		vkCmdPipelineBarrier(
+			commandBuffer,
+			VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+			VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+			0,
+			0,
+			nullptr,
+			0,
+			nullptr,
+			1,
+			&depthImageStartTransitionBarrier
+		);
+
 		vkCmdBeginRendering(commandBuffer, &renderingInfo);
-
-		//migrate rendering logic here
-
 
 		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
@@ -1950,6 +1987,39 @@ private:
 		vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices->size()), 1, 0, 0, 0);
 		
 		vkCmdEndRendering(commandBuffer);
+
+		//transitionImageLayout();
+
+		//transition images to present_src
+		VkImageMemoryBarrier colorImageEndTransitionBarrier{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+			.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+			.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.image = swapChainImages[currentFrame],
+			.subresourceRange = {
+				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+				.baseMipLevel = 0,
+				.levelCount = 1,
+				.baseArrayLayer = 0,
+				.layerCount = 1
+			}
+		};
+
+		vkCmdPipelineBarrier(
+			commandBuffer,
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+			VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+			0,
+			0,
+			nullptr,
+			0,
+			nullptr,
+			1,
+			&colorImageEndTransitionBarrier
+		);
 
 		if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
 			throw std::runtime_error("failed to record command buffer!");
