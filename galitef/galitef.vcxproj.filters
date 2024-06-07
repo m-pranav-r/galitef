@@ -33,5 +33,12 @@
     <None Include="shader\compile.bat">
       <Filter>Source Files</Filter>
     </None>
+    <None Include="shader\vert.spv" />
+    <None Include="shader\hdriToCubemap.vert" />
+    <None Include="shader\hdriToCubemap.frag" />
+    <None Include="shader\frag.spv" />
+    <None Include="shader\copy.bat">
+      <Filter>Source Files</Filter>
+    </None>
   </ItemGroup>
 </Project>

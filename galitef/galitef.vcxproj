@@ -147,8 +147,13 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="shader\compile.bat" />
+    <None Include="shader\copy.bat" />
+    <None Include="shader\frag.spv" />
+    <None Include="shader\hdriToCubemap.frag" />
+    <None Include="shader\hdriToCubemap.vert" />
     <None Include="shader\shader.frag" />
     <None Include="shader\shader.vert" />
+    <None Include="shader\vert.spv" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

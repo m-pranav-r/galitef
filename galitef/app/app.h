@@ -18,6 +18,12 @@
 #include "../gltf/parser.h"
 #endif
 
+#ifndef STB_H
+#define STB_H
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+#endif
+
 #include <chrono>
 #include <iostream>
 #include <stdexcept>
@@ -233,7 +239,6 @@ private:
 	VkDescriptorSetLayout descriptorSetLayout;
 	std::vector<VkDescriptorSet> descriptorSets;
 	VkPipeline graphicsPipeline;
-	std::vector<VkFramebuffer> swapChainFramebuffers;
 	VkCommandPool commandPool;
 	VkCommandPool transferPool;
 	std::vector<Vertex> vertices;
@@ -258,6 +263,16 @@ private:
 	VkImage depthImage;
 	VkDeviceMemory depthImageMemory;
 	VkImageView depthImageView;
+
+	VkImage hdriImage;
+	VkDeviceMemory hdriImageMemory;
+	VkImageView hdriImageView;
+	VkSampler diffuseCubemapSampler;
+
+	VkImage diffuseCubemapImage;
+	VkDeviceMemory diffuseCubemapImageMemory;
+	VkImageView diffuseCubemapImageView;
+	VkImageView diffuseCubemapFaceImageView[6];
 
 
 	std::vector<VkBuffer> uniformBuffers, materialBuffers;
@@ -322,6 +337,11 @@ private:
 		createTextureImages();
 		createTextureImageViews();
 		createTextureSamplers();
+
+			//IBL
+			createHDRIResources();
+			createCubemapResources();
+			performOffscreenRender();
 
 		//load geom data from file
 		loadModel();
@@ -1551,6 +1571,485 @@ private:
 		}
 	}
 
+	void createHDRIResources() {
+		stbi_set_flip_vertically_on_load(true);
+		int width, height, noComponents;
+		float* pixels = stbi_loadf("hdri/overcast_soil_puresky_4k.hdr", &width, &height, &noComponents, 3);
+		if (!pixels) {
+			throw std::runtime_error("failed to load hdri!");
+		}
+
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+
+		VkDeviceSize imageSize = width * height * noComponents * sizeof(float);
+
+		createBuffer(
+			imageSize,
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			stagingBuffer,
+			stagingBufferMemory
+		);
+
+		void* data;
+		if (vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data) != VK_SUCCESS) {
+			throw std::runtime_error("failed to map hdri texture memory!");
+		}
+		memcpy(data, pixels, static_cast<size_t>(imageSize));
+		vkUnmapMemory(device, stagingBufferMemory);
+
+		stbi_image_free(pixels);
+
+		/*
+		createImage(
+			width,
+			height,
+			1,
+			VK_SAMPLE_COUNT_1_BIT,
+			VK_FORMAT_R32G32B32_SFLOAT,
+			VK_IMAGE_TILING_LINEAR,
+			VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			hdriImage,
+			hdriImageMemory
+		);
+
+		VkImageFormatProperties formatProperties;
+
+		vkGetPhysicalDeviceImageFormatProperties(
+			physicalDevice,
+			VK_FORMAT_R32G32B32_SFLOAT,
+			VK_
+		);
+		*/
+
+		VkImageCreateInfo imageInfo{};
+		imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+		imageInfo.imageType = VK_IMAGE_TYPE_2D;
+		imageInfo.extent.width = static_cast<uint32_t>(width);
+		imageInfo.extent.height = static_cast<uint32_t>(height);
+		imageInfo.extent.depth = 1;
+		imageInfo.mipLevels = 1;
+		imageInfo.arrayLayers = 1; //since we're making a cubemap
+		imageInfo.format = VK_FORMAT_R32G32B32_SFLOAT;
+		imageInfo.tiling = VK_IMAGE_TILING_LINEAR;
+		imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+		imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+
+		if (vkCreateImage(device, &imageInfo, nullptr, &hdriImage) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create hdri image!");
+		}
+
+		VkMemoryRequirements memRequirements;
+		vkGetImageMemoryRequirements(device, hdriImage, &memRequirements);
+
+		VkMemoryAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		allocInfo.allocationSize = memRequirements.size;
+		allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+		if (vkAllocateMemory(device, &allocInfo, nullptr, &hdriImageMemory) != VK_SUCCESS) {
+			throw std::runtime_error("failed to allocate hdri image memory!");
+		}
+
+		vkBindImageMemory(device, hdriImage, hdriImageMemory, 0);
+
+		transitionImageLayout(
+			hdriImage,
+			VK_FORMAT_R32G32B32_SFLOAT,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			1
+		);
+
+		copyBufferToImage(
+			stagingBuffer,
+			hdriImage,
+			static_cast<uint32_t>(width),
+			static_cast<uint32_t>(height)
+		);
+
+		vkDestroyBuffer(device, stagingBuffer, nullptr);
+		vkFreeMemory(device, stagingBufferMemory, nullptr);
+	}
+
+	void createCubemapResources() {
+		VkImageCreateInfo cubemapImageInfo{};
+		cubemapImageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+		cubemapImageInfo.imageType = VK_IMAGE_TYPE_2D;
+		cubemapImageInfo.extent.width = 1024;
+		cubemapImageInfo.extent.height = 1024;
+		cubemapImageInfo.extent.depth = 1;
+		cubemapImageInfo.mipLevels = 1;
+		cubemapImageInfo.arrayLayers = 6;
+		cubemapImageInfo.format = swapChainImageFormat;
+		cubemapImageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+		cubemapImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		cubemapImageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+		cubemapImageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		cubemapImageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+		cubemapImageInfo.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+
+		if (vkCreateImage(device, &cubemapImageInfo, nullptr, &diffuseCubemapImage) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create cubemap image!");
+		}
+
+		VkMemoryRequirements memRequirements;
+		vkGetImageMemoryRequirements(device, diffuseCubemapImage, &memRequirements);
+
+		VkMemoryAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		allocInfo.allocationSize = memRequirements.size;
+		allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+		if (vkAllocateMemory(device, &allocInfo, nullptr, &diffuseCubemapImageMemory) != VK_SUCCESS) {
+			throw std::runtime_error("failed to allocate cubemap memory!");
+
+		}
+		vkBindImageMemory(device, diffuseCubemapImage, diffuseCubemapImageMemory, 0);
+
+		/*
+		*																	DO THIS BEFORE BEGINNING OFFSCREEN RENDERING!!
+		VkImageMemoryBarrier cubemapTransition = {
+			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+			.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+			.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+			.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.image = diffuseCubemapImage,
+			.subresourceRange = {
+				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+				.baseMipLevel = 0,
+				.levelCount = 1,
+				.baseArrayLayer = 0,
+				.layerCount = 6
+			}
+		};
+
+		vkCmdPipelineBarrier(
+			commandBuffer,
+			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+			0,
+			0,
+			nullptr,
+			0,
+			nullptr,
+			1,
+			&cubemapTransition
+		);
+		*/
+
+		VkSamplerCreateInfo cubemapSamplerInfo{};
+		cubemapSamplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+		cubemapSamplerInfo.magFilter = VK_FILTER_LINEAR;
+		cubemapSamplerInfo.minFilter = VK_FILTER_LINEAR;
+		cubemapSamplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+		cubemapSamplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+		cubemapSamplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+		cubemapSamplerInfo.anisotropyEnable = VK_TRUE;
+		cubemapSamplerInfo.maxAnisotropy = 1.0f;
+		cubemapSamplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+		cubemapSamplerInfo.unnormalizedCoordinates = VK_FALSE;
+		cubemapSamplerInfo.compareEnable = VK_FALSE;
+		cubemapSamplerInfo.compareOp = VK_COMPARE_OP_NEVER;
+		cubemapSamplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+		cubemapSamplerInfo.minLod = 0.0f;
+		cubemapSamplerInfo.maxLod = 1.0f;
+		cubemapSamplerInfo.mipLodBias = 0.0f;
+		cubemapSamplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+
+		if (vkCreateSampler(device, &cubemapSamplerInfo, nullptr, &diffuseCubemapSampler) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create cubemap sampler!");
+		}
+
+		VkImageViewCreateInfo cubemapViewInfo{};
+		cubemapViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+		cubemapViewInfo.image = diffuseCubemapImage;
+		cubemapViewInfo.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
+		cubemapViewInfo.format = swapChainImageFormat;
+		cubemapViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		cubemapViewInfo.subresourceRange.baseMipLevel = 0;
+		cubemapViewInfo.subresourceRange.levelCount = 1;
+		cubemapViewInfo.subresourceRange.baseArrayLayer = 0;
+		cubemapViewInfo.subresourceRange.layerCount = 6;
+
+		if (vkCreateImageView(device, &cubemapViewInfo, nullptr, &diffuseCubemapImageView) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create cubemap view!");
+		}
+
+		cubemapViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		cubemapViewInfo.subresourceRange.layerCount = 1;
+		cubemapViewInfo.image = diffuseCubemapImage;
+
+		for (uint32_t i = 0; i < 6; i++) {
+			cubemapViewInfo.subresourceRange.baseArrayLayer = i;
+			if (vkCreateImageView(device, &cubemapViewInfo, nullptr, &diffuseCubemapFaceImageView[i]) != VK_SUCCESS) {
+				throw std::runtime_error("failed to create cubemap face view #" + i);
+			}
+		}
+	}
+
+	void performOffscreenRender() {
+		//create uniform buffers
+		//																																				dont forget to HANDLE DELETION LATER!!
+		VkBuffer offscreenUniformBuffer;
+		VkDeviceMemory offscreenUniformBufferMemory;
+		void* offscreenUniformBufferMapped;
+
+		VkBufferCreateInfo offscreenUniformBufferInfo;
+		VkDeviceSize bufferSize = sizeof(UniformBufferObject);
+
+		createBuffer(
+			bufferSize,
+			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			offscreenUniformBuffer,
+			offscreenUniformBufferMemory
+		);
+		vkMapMemory(device, offscreenUniformBufferMemory, 0, bufferSize, 0, &offscreenUniformBufferMapped);
+
+		//setup descriptors
+		//pool
+		VkDescriptorPool offscreenDescriptorPool;
+		std::array<VkDescriptorPoolSize, 2> poolSizes{};
+		poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		poolSizes[0].descriptorCount = 1;
+		poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		poolSizes[1].descriptorCount = 1;
+
+		VkDescriptorPoolCreateInfo poolInfo{};
+		poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+		poolInfo.poolSizeCount = 2;
+		poolInfo.pPoolSizes = poolSizes.data();
+		poolInfo.maxSets = 1;
+
+		if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &offscreenDescriptorPool) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create offscreen descriptor pool!");
+		}
+
+		//layout
+		VkDescriptorSetLayout offscreenDescriptorSetLayout;
+		VkDescriptorSetLayoutBinding uboLayoutBinding{};
+		uboLayoutBinding.binding = 0;
+		uboLayoutBinding.descriptorCount = 1;
+		uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		uboLayoutBinding.pImmutableSamplers = nullptr;
+		uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+		VkDescriptorSetLayoutBinding cubemapLayoutBinding{};
+		cubemapLayoutBinding.binding = 1;
+		cubemapLayoutBinding.descriptorCount = 1;
+		cubemapLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		cubemapLayoutBinding.pImmutableSamplers = nullptr;
+		cubemapLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+		std::array<VkDescriptorSetLayoutBinding, 2> bindings = {
+			uboLayoutBinding,
+			cubemapLayoutBinding
+		};
+
+		VkDescriptorSetLayoutCreateInfo layoutInfo{};
+		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		layoutInfo.bindingCount = 2;
+		layoutInfo.pBindings = bindings.data();
+
+		if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &offscreenDescriptorSetLayout) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create offscreen descriptor set layout!");
+		}
+
+		//sets
+		VkDescriptorSet offscreenDescriptorSet;
+		VkDescriptorSetAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocInfo.descriptorPool = offscreenDescriptorPool;
+		allocInfo.descriptorSetCount = 1;
+		allocInfo.pSetLayouts = &offscreenDescriptorSetLayout;
+
+		if (vkAllocateDescriptorSets(device, &allocInfo, &offscreenDescriptorSet) != VK_SUCCESS) {
+			throw std::runtime_error("failed to allocate offscreen descriptor set!");
+		}
+
+		VkDescriptorBufferInfo uniformBufferInfo{};
+		uniformBufferInfo.buffer = offscreenUniformBuffer;
+		uniformBufferInfo.offset = 0;
+		uniformBufferInfo.range = sizeof(UniformBufferObject);
+
+		VkDescriptorImageInfo cubemapImageInfo{};
+		cubemapImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		cubemapImageInfo.imageView = diffuseCubemapImageView;
+		cubemapImageInfo.sampler = diffuseCubemapSampler;
+
+		std::array<VkWriteDescriptorSet, 2> descWrites{};
+
+		descWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		descWrites[0].dstSet = offscreenDescriptorSet;
+		descWrites[0].dstBinding = 0;
+		descWrites[0].dstArrayElement = 0;
+		descWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		descWrites[0].descriptorCount = 1;
+		descWrites[0].pBufferInfo = &uniformBufferInfo;
+
+		descWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		descWrites[1].dstSet = offscreenDescriptorSet;
+		descWrites[1].dstBinding = 1;
+		descWrites[1].dstArrayElement = 0;
+		descWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		descWrites[1].descriptorCount = 1;
+		descWrites[1].pImageInfo = &cubemapImageInfo;
+
+		vkUpdateDescriptorSets(device, static_cast<uint32_t>(descWrites.size()), descWrites.data(), 0, nullptr);
+
+		//make offscreen pipeline
+
+		createOffscreenPipeline();
+
+		//make command buffers
+
+		//update uniform buffers 6 times
+
+		//draw
+	}
+
+	void createOffscreenPipeline() {
+		auto vertShaderCode = readFile("shader/cube.vert.spv");
+		auto fragShaderCode = readFile("shader/cube.frag.spv");
+
+		VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+		VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+		VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+		vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+		vertShaderStageInfo.module = vertShaderModule;
+		vertShaderStageInfo.pName = "main";
+
+		VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+		fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+		fragShaderStageInfo.module = fragShaderModule;
+		fragShaderStageInfo.pName = "main";
+
+		VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
+
+		//auto bindingDescription = Vertex::getBindingDescription();
+		//auto attributeDescriptions = Vertex::getAttributeDescriptions();
+
+		VkVertexInputBindingDescription bindingDescription;
+		VkVertexInputAttributeDescription attributeDescription;
+
+		VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+		vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+		vertexInputInfo.vertexBindingDescriptionCount = 0;
+		vertexInputInfo.vertexAttributeDescriptionCount = 0;
+		//vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+		//vertexInputInfo.pVertexAttributeDescriptions = &attributeDescription;
+
+		VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+		inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+		inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+		inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+		VkPipelineViewportStateCreateInfo viewportState{};
+		viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+		viewportState.viewportCount = 1;
+		viewportState.scissorCount = 1;
+
+		VkPipelineRasterizationStateCreateInfo rasterizer{};
+		rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+		rasterizer.depthClampEnable = VK_FALSE;
+		rasterizer.rasterizerDiscardEnable = VK_FALSE;
+		rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+		rasterizer.lineWidth = 1.0f;
+		rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+		rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+		rasterizer.depthBiasEnable = VK_FALSE;
+
+		VkPipelineMultisampleStateCreateInfo multisampling{};
+		multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+		multisampling.sampleShadingEnable = VK_FALSE;
+		multisampling.alphaToCoverageEnable = VK_FALSE;
+		multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+		VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+		colorBlendAttachment.colorWriteMask =
+			VK_COLOR_COMPONENT_R_BIT |
+			VK_COLOR_COMPONENT_G_BIT |
+			VK_COLOR_COMPONENT_B_BIT |
+			VK_COLOR_COMPONENT_A_BIT;
+		colorBlendAttachment.blendEnable = VK_FALSE;
+
+		VkPipelineColorBlendStateCreateInfo colorBlending{};
+		colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+		colorBlending.logicOpEnable = VK_FALSE;
+		colorBlending.attachmentCount = 1;
+		colorBlending.pAttachments = &colorBlendAttachment;
+
+		VkPipelineDepthStencilStateCreateInfo depthStencil{};
+		depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+		depthStencil.depthTestEnable = VK_TRUE;
+		depthStencil.depthWriteEnable = VK_TRUE;
+		depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+		depthStencil.depthBoundsTestEnable = VK_FALSE;
+		depthStencil.stencilTestEnable = VK_FALSE;
+
+		std::vector<VkDynamicState> dynamicStates = {
+			VK_DYNAMIC_STATE_VIEWPORT,
+			VK_DYNAMIC_STATE_SCISSOR
+		};
+
+		VkPipelineDynamicStateCreateInfo dynamicState{};
+		dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+		dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+		dynamicState.pDynamicStates = dynamicStates.data();
+
+		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+		pipelineLayoutInfo.setLayoutCount = 1;
+		pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
+
+		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create pipeline layout!");
+		}
+
+		VkPipelineRenderingCreateInfoKHR pipelineRenderingCreateInfo = {
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR,
+			.colorAttachmentCount = 1,
+			.pColorAttachmentFormats = &swapChainImageFormat,
+			.depthAttachmentFormat = findDepthFormat()
+		};
+
+		VkGraphicsPipelineCreateInfo pipelineInfo{};
+		pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+		pipelineInfo.stageCount = 2;
+		pipelineInfo.pStages = shaderStages;
+		pipelineInfo.pVertexInputState = &vertexInputInfo;
+		pipelineInfo.pInputAssemblyState = &inputAssembly;
+		pipelineInfo.pViewportState = &viewportState;
+		pipelineInfo.pRasterizationState = &rasterizer;
+		pipelineInfo.pMultisampleState = &multisampling;
+		pipelineInfo.pDepthStencilState = &depthStencil;
+		pipelineInfo.pColorBlendState = &colorBlending;
+		pipelineInfo.pDynamicState = &dynamicState;
+		pipelineInfo.layout = pipelineLayout;
+		pipelineInfo.renderPass = NULL;
+		pipelineInfo.pNext = &pipelineRenderingCreateInfo;
+		pipelineInfo.subpass = 0;
+		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+		pipelineInfo.basePipelineIndex = -1;
+
+		if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create graphics pipeline!");
+		}
+
+		vkDestroyShaderModule(device, vertShaderModule, nullptr);
+		vkDestroyShaderModule(device, fragShaderModule, nullptr);
+	}
+
 	void loadModel() {
 		std::cout << "trying to load model...";
 		for (int i = 0; i < model.pos.size(); i++) {
@@ -2213,9 +2712,6 @@ private:
 		vkDestroyImage(device, depthImage, nullptr);
 		vkFreeMemory(device, depthImageMemory, nullptr);
 
-		for (auto framebuffer : swapChainFramebuffers) {
-			vkDestroyFramebuffer(device, framebuffer, nullptr);
-		}
 		for (auto swapChainImageView : swapChainImageViews) {
 			vkDestroyImageView(device, swapChainImageView, nullptr);
 		}
@@ -2249,6 +2745,23 @@ private:
 		vkDestroyImageView(device, baseColorImageView, nullptr);
 		vkDestroyImage(device, baseColorImage, nullptr);
 		vkFreeMemory(device, baseColorMemory, nullptr);
+
+		vkDestroyImageView(device, hdriImageView, nullptr);
+		vkDestroyImage(device, hdriImage, nullptr);
+		vkFreeMemory(device, hdriImageMemory, nullptr);
+
+		vkDestroySampler(device, diffuseCubemapSampler, nullptr);
+		vkDestroyImageView(device, diffuseCubemapImageView, nullptr);
+		vkDestroyImage(device, diffuseCubemapImage, nullptr);
+		vkFreeMemory(device, diffuseCubemapImageMemory, nullptr);
+
+		vkDestroyImageView(device, diffuseCubemapFaceImageView[0], nullptr);
+		vkDestroyImageView(device, diffuseCubemapFaceImageView[1], nullptr);
+		vkDestroyImageView(device, diffuseCubemapFaceImageView[2], nullptr);
+		vkDestroyImageView(device, diffuseCubemapFaceImageView[3], nullptr);
+		vkDestroyImageView(device, diffuseCubemapFaceImageView[4], nullptr);
+		vkDestroyImageView(device, diffuseCubemapFaceImageView[5], nullptr);
+		
 
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 			vkDestroyBuffer(device, materialBuffers[i], nullptr);
@@ -2299,7 +2812,7 @@ private:
 		const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
 		void* pUserData) {
 
-		std::cerr << "validation layer: " << pCallbackData->pMessage << std::endl;
+		std::cerr << "validation layer: " << pCallbackData->pMessage << std::endl << std::endl;
 
 		return VK_FALSE;
 	}
