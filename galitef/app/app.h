@@ -122,7 +122,8 @@ const std::vector<const char*> validationlayers = {
 const std::vector<const char*> deviceExtensions = {
 	VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 	VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
-	VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME
+	VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
+	VK_EXT_SHADER_VIEWPORT_INDEX_LAYER_EXTENSION_NAME
 };
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
@@ -267,13 +268,21 @@ private:
 	VkImage hdriImage;
 	VkDeviceMemory hdriImageMemory;
 	VkImageView hdriImageView;
-	VkSampler diffuseCubemapSampler;
+	VkSampler hdriSampler;
 
 	VkImage diffuseCubemapImage;
 	VkDeviceMemory diffuseCubemapImageMemory;
 	VkImageView diffuseCubemapImageView;
 	VkImageView diffuseCubemapFaceImageView[6];
+	VkSampler diffuseCubemapSampler;
+	VkImage offscreenDepthImage;
+	VkDeviceMemory offscreenDepthImageMemory;
+	VkImageView offscreenDepthImageView;
 
+	VkBuffer offscreenVertexBuffer;
+	VkDeviceMemory offscreenVertexBufferMemory;
+
+	VkPipelineLayout offscreenPipelineLayout;
 
 	std::vector<VkBuffer> uniformBuffers, materialBuffers;
 	std::vector<VkDeviceMemory> uniformBuffersMemory, materialBuffersMemory;
@@ -1337,6 +1346,13 @@ private:
 			srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
 			dstStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
 		}
+		else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL) {
+			barrier.srcAccessMask = 0;
+			barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+			srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+			dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		}
 		else {
 			throw std::runtime_error("unsupported layout transition!");
 		}
@@ -1631,7 +1647,7 @@ private:
 		imageInfo.extent.height = static_cast<uint32_t>(height);
 		imageInfo.extent.depth = 1;
 		imageInfo.mipLevels = 1;
-		imageInfo.arrayLayers = 1; //since we're making a cubemap
+		imageInfo.arrayLayers = 1;
 		imageInfo.format = VK_FORMAT_R32G32B32_SFLOAT;
 		imageInfo.tiling = VK_IMAGE_TILING_LINEAR;
 		imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -1672,11 +1688,59 @@ private:
 			static_cast<uint32_t>(height)
 		);
 
+		transitionImageLayout(
+			hdriImage,
+			VK_FORMAT_R32G32B32_SFLOAT,
+			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			1
+		);
+
 		vkDestroyBuffer(device, stagingBuffer, nullptr);
 		vkFreeMemory(device, stagingBufferMemory, nullptr);
+
+		VkSamplerCreateInfo hdriSamplerInfo{};
+		hdriSamplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+		hdriSamplerInfo.magFilter = VK_FILTER_LINEAR;
+		hdriSamplerInfo.minFilter = VK_FILTER_LINEAR;
+		hdriSamplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+		hdriSamplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+		hdriSamplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+		hdriSamplerInfo.anisotropyEnable = VK_TRUE;
+		hdriSamplerInfo.maxAnisotropy = 1.0f;
+		hdriSamplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+		hdriSamplerInfo.unnormalizedCoordinates = VK_FALSE;
+		hdriSamplerInfo.compareEnable = VK_FALSE;
+		hdriSamplerInfo.compareOp = VK_COMPARE_OP_NEVER;
+		hdriSamplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+		hdriSamplerInfo.minLod = 0.0f;
+		hdriSamplerInfo.maxLod = 1.0f;
+		hdriSamplerInfo.mipLodBias = 0.0f;
+
+		if (vkCreateSampler(device, &hdriSamplerInfo, nullptr, &hdriSampler) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create hdri sampler!");
+		}
+
+		VkImageViewCreateInfo hdriViewInfo{};
+		hdriViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+		hdriViewInfo.image = hdriImage;
+		hdriViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		hdriViewInfo.format = VK_FORMAT_R32G32B32_SFLOAT;
+		hdriViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		hdriViewInfo.subresourceRange.baseMipLevel = 0;
+		hdriViewInfo.subresourceRange.levelCount = 1;
+		hdriViewInfo.subresourceRange.baseArrayLayer = 0;
+		hdriViewInfo.subresourceRange.layerCount = 1;
+
+		if (vkCreateImageView(device, &hdriViewInfo, nullptr, &hdriImageView) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create hdri view!");
+		}
+		//vkDestroyBuffer(device, stagingBuffer, nullptr);
+		//vkFreeMemory(device, stagingBufferMemory, nullptr);
 	}
 
 	void createCubemapResources() {
+		//this is the color attachment
 		VkImageCreateInfo cubemapImageInfo{};
 		cubemapImageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
 		cubemapImageInfo.imageType = VK_IMAGE_TYPE_2D;
@@ -1710,6 +1774,23 @@ private:
 
 		}
 		vkBindImageMemory(device, diffuseCubemapImage, diffuseCubemapImageMemory, 0);
+
+		//depth attachment
+		VkFormat depthFormat = findDepthFormat();
+		createImage(
+			1024,
+			1024,
+			1,
+			VK_SAMPLE_COUNT_1_BIT,
+			depthFormat,
+			VK_IMAGE_TILING_OPTIMAL,
+			VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			offscreenDepthImage,
+			offscreenDepthImageMemory
+		);
+		offscreenDepthImageView = createImageView(offscreenDepthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1);
+		transitionImageLayout(offscreenDepthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 1);
 
 		/*
 		*																	DO THIS BEFORE BEGINNING OFFSCREEN RENDERING!!
@@ -1794,11 +1875,126 @@ private:
 		}
 	}
 
+	void recordOffscreenCommandBuffers(uint32_t face, glm::mat4 viewMatrix, VkCommandBuffer offscreenCommandBuffer, void* offscreenUniformBufferMapped, VkPipeline offscreenPipeline, VkDescriptorSet offscreenDescriptorSet) {
+
+		VkCommandBufferBeginInfo beginInfo{};
+		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+		if (vkBeginCommandBuffer(offscreenCommandBuffer, &beginInfo) != VK_SUCCESS) {
+			throw std::runtime_error("failed to begin recording offscreen command buffer!");
+		}
+		std::array<VkClearValue, 2>clearValues{};
+		clearValues[0].color = { {0.0f, 0.0f, 0.0f, 1.0f} };
+		clearValues[1].depthStencil = { 1.0f, 0 };
+
+		VkRenderingAttachmentInfoKHR colorAttachment = {
+			.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+			.imageView = diffuseCubemapFaceImageView[face],
+			.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
+			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+			.clearValue = clearValues[0]
+		};
+
+		VkRenderingAttachmentInfoKHR depthAttachment = {
+			.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+			.imageView = offscreenDepthImageView,
+			.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL_KHR,
+			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+			.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			.clearValue = clearValues[1]
+		};
+
+		VkRenderingInfoKHR renderingInfo = {
+			.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR,
+			.renderArea = {0, 0, 1024, 1024},
+			.layerCount = 1,
+			.colorAttachmentCount = 1,
+			.pColorAttachments = &colorAttachment,
+			.pDepthAttachment = &depthAttachment,
+		};
+
+		//color image transition
+
+		VkImageMemoryBarrier colorImageStartTransitionBarrier = {
+			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+			.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+			.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+			.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.image = diffuseCubemapImage,
+			.subresourceRange = {
+				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+				.baseMipLevel = 0,
+				.levelCount = 1,
+				.baseArrayLayer = 0,
+				.layerCount = 1
+			}
+		};
+
+		vkCmdPipelineBarrier(
+			offscreenCommandBuffer,
+			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+			0,
+			0,
+			nullptr,
+			0,
+			nullptr,
+			1,
+			&colorImageStartTransitionBarrier
+		);
+
+		vkCmdBeginRendering(offscreenCommandBuffer, &renderingInfo);
+
+		vkCmdBindPipeline(offscreenCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, offscreenPipeline);
+
+		VkBuffer vertexBuffers[] = { offscreenVertexBuffer };
+		VkDeviceSize offsets[] = { 0 };
+		vkCmdBindVertexBuffers(offscreenCommandBuffer, 0, 1, vertexBuffers, offsets);
+		//vkCmdBindIndexBuffer(offscreenCommandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+
+		VkViewport viewport{};
+		viewport.x = 0.0f;
+		viewport.y = 0.0f;
+		viewport.width = static_cast<float>(1024);
+		viewport.height = static_cast<float>(1024);
+		viewport.minDepth = 0.0f;
+		viewport.maxDepth = 1.0f;
+		vkCmdSetViewport(offscreenCommandBuffer, 0, 1, &viewport);
+
+		VkRect2D scissor{};
+		scissor.offset = { 0, 0 };
+		scissor.extent.height = 1024;
+		scissor.extent.width = 1024;
+		vkCmdSetScissor(offscreenCommandBuffer, 0, 1, &scissor);
+		vkCmdBindDescriptorSets(offscreenCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, offscreenPipelineLayout, 0, 1, &offscreenDescriptorSet, 0, nullptr);		//figure out what the hell this is supposed to be
+		vkCmdDraw(offscreenCommandBuffer, 36, 1, 0, 0);
+
+		//add data to uniform buffer
+		UniformBufferObject ubo{};
+		ubo.model = glm::mat4(1.0);
+		ubo.proj = glm::perspective((float)(3.1417 / 2.0), 1.0f, 0.1f, 10.0f);
+		//ubo.view = glm::mat4(1.0f);
+		ubo.view = viewMatrix;
+		ubo.camPos = glm::vec3(1.0f);
+		memcpy(offscreenUniformBufferMapped, &ubo, sizeof(UniformBufferObject));
+
+		vkCmdEndRendering(offscreenCommandBuffer);
+
+		if (vkEndCommandBuffer(offscreenCommandBuffer) != VK_SUCCESS) {
+			throw std::runtime_error("failed to record offscreen command buffer!");
+		}
+	}
+
 	void performOffscreenRender() {
 		//create uniform buffers
 		//																																				dont forget to HANDLE DELETION LATER!!
 		VkBuffer offscreenUniformBuffer;
 		VkDeviceMemory offscreenUniformBufferMemory;
+
+
 		void* offscreenUniformBufferMapped;
 
 		VkBufferCreateInfo offscreenUniformBufferInfo;
@@ -1812,6 +2008,7 @@ private:
 			offscreenUniformBufferMemory
 		);
 		vkMapMemory(device, offscreenUniformBufferMemory, 0, bufferSize, 0, &offscreenUniformBufferMapped);
+
 
 		//setup descriptors
 		//pool
@@ -1881,8 +2078,8 @@ private:
 
 		VkDescriptorImageInfo cubemapImageInfo{};
 		cubemapImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-		cubemapImageInfo.imageView = diffuseCubemapImageView;
-		cubemapImageInfo.sampler = diffuseCubemapSampler;
+		cubemapImageInfo.imageView = hdriImageView;
+		cubemapImageInfo.sampler = hdriSampler;
 
 		std::array<VkWriteDescriptorSet, 2> descWrites{};
 
@@ -1906,48 +2103,132 @@ private:
 
 		//make offscreen pipeline
 
-		createOffscreenPipeline();
-
+		VkPipeline offscreenPipeline = createOffscreenPipeline(offscreenDescriptorSetLayout);
 		//make command buffers
+		VkCommandBuffer offscreenCommandBuffer;
 
-		//update uniform buffers 6 times
 
-		//draw
+		VkCommandBufferAllocateInfo commandBufferAllocInfo{};
+		commandBufferAllocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		commandBufferAllocInfo.commandPool = commandPool;
+		commandBufferAllocInfo.commandBufferCount = 1;
+		commandBufferAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+
+		if (vkAllocateCommandBuffers(device, &commandBufferAllocInfo, &offscreenCommandBuffer) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create offscreen command buffers!");
+		}
+
+		vkResetCommandBuffer(offscreenCommandBuffer, 0);
+
+
+		//fences info
+		VkFence offscreenFaceRenderedFence_0, offscreenFaceRenderedFence_1;
+
+		VkFenceCreateInfo fenceInfo{};
+		fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+		fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+		vkCreateFence(device, &fenceInfo, nullptr, &offscreenFaceRenderedFence_0);
+		vkCreateFence(device, &fenceInfo, nullptr, &offscreenFaceRenderedFence_1);
+
+		//queue submit info
+		VkSubmitInfo submitInfo{};
+		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+		submitInfo.waitSemaphoreCount = 0;
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &offscreenCommandBuffer;
+		submitInfo.signalSemaphoreCount = 0;
+
+		//0
+		glm::mat4 viewMatrix = glm::mat4(1.0f);
+		viewMatrix = glm::rotate(viewMatrix, glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+		viewMatrix = glm::rotate(viewMatrix, glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+		vkResetFences(device, 1, &offscreenFaceRenderedFence_0);
+
+		recordOffscreenCommandBuffers(0, viewMatrix, offscreenCommandBuffer, offscreenUniformBufferMapped, offscreenPipeline, offscreenDescriptorSet);
+
+		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, offscreenFaceRenderedFence_0) != VK_SUCCESS) {
+			throw std::runtime_error("failed to submit draw offscreen command buffer!");
+		}
+
+		vkWaitForFences(device, 1, &offscreenFaceRenderedFence_0, VK_TRUE, UINT64_MAX);
+		vkResetFences(device, 1, &offscreenFaceRenderedFence_1);
+
+		//1
+		viewMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+		viewMatrix = glm::rotate(viewMatrix, glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+		recordOffscreenCommandBuffers(1, viewMatrix, offscreenCommandBuffer, offscreenUniformBufferMapped, offscreenPipeline, offscreenDescriptorSet);
+
+		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, offscreenFaceRenderedFence_1) != VK_SUCCESS) {
+			throw std::runtime_error("failed to submit draw offscreen command buffer!");
+		}
+
+		vkWaitForFences(device, 1, &offscreenFaceRenderedFence_1, VK_TRUE, UINT64_MAX);
+		vkResetFences(device, 1, &offscreenFaceRenderedFence_0);
+
+		//2
+		viewMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+		recordOffscreenCommandBuffers(2, viewMatrix, offscreenCommandBuffer, offscreenUniformBufferMapped, offscreenPipeline, offscreenDescriptorSet);
+
+		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, offscreenFaceRenderedFence_0) != VK_SUCCESS) {
+			throw std::runtime_error("failed to submit draw offscreen command buffer!");
+		}
+
+		vkWaitForFences(device, 1, &offscreenFaceRenderedFence_0, VK_TRUE, UINT64_MAX);
+		vkResetFences(device, 1, &offscreenFaceRenderedFence_1);
+
+		//3
+		viewMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+		recordOffscreenCommandBuffers(3, viewMatrix, offscreenCommandBuffer, offscreenUniformBufferMapped, offscreenPipeline, offscreenDescriptorSet);
+
+		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, offscreenFaceRenderedFence_1) != VK_SUCCESS) {
+			throw std::runtime_error("failed to submit draw offscreen command buffer!");
+		}
+
+		vkWaitForFences(device, 1, &offscreenFaceRenderedFence_1, VK_TRUE, UINT64_MAX);
+		vkResetFences(device, 1, &offscreenFaceRenderedFence_0);
+
+		//4
+		viewMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+		recordOffscreenCommandBuffers(4, viewMatrix, offscreenCommandBuffer, offscreenUniformBufferMapped, offscreenPipeline, offscreenDescriptorSet);
+
+		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, offscreenFaceRenderedFence_0) != VK_SUCCESS) {
+			throw std::runtime_error("failed to submit draw offscreen command buffer!");
+		}
+
+		vkWaitForFences(device, 1, &offscreenFaceRenderedFence_0, VK_TRUE, UINT64_MAX);
+		vkResetFences(device, 1, &offscreenFaceRenderedFence_1);
+
+		//5
+		viewMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+		recordOffscreenCommandBuffers(5, viewMatrix, offscreenCommandBuffer, offscreenUniformBufferMapped, offscreenPipeline, offscreenDescriptorSet);
+
+		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, offscreenFaceRenderedFence_1) != VK_SUCCESS) {
+			throw std::runtime_error("failed to submit draw offscreen command buffer!");
+		}
+
+		vkWaitForFences(device, 1, &offscreenFaceRenderedFence_1, VK_TRUE, UINT64_MAX);
+
+		/*
+		VkPresentInfoKHR presentInfo{};
+		presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+		*/
+
+		/*
+		vkDestroySampler(device, hdriSampler, nullptr);
+		vkDestroyImageView(device, hdriImageView, nullptr);
+		vkDestroyImage(device, hdriImage, nullptr);
+		vkFreeMemory(device, hdriImageMemory, nullptr);
+		vkDestroyFence(device, offscreenFaceRenderedFence_1, nullptr);
+		vkDestroyFence(device, offscreenFaceRenderedFence_0, nullptr);
+		vkDestroyPipeline(device, offscreenPipeline, nullptr);
+		vkDestroyPipelineLayout(device, offscreenPipelineLayout, nullptr);
+		vkDestroyDescriptorSetLayout(device, offscreenDescriptorSetLayout, nullptr);
+		vkDestroyDescriptorPool(device, offscreenDescriptorPool, nullptr);
+		*/
+
 	}
 
-	void createOffscreenPipeline() {
-		auto vertShaderCode = readFile("shader/cube.vert.spv");
-		auto fragShaderCode = readFile("shader/cube.frag.spv");
-
-		VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
-		VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
-
-		VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
-		vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-		vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
-		vertShaderStageInfo.module = vertShaderModule;
-		vertShaderStageInfo.pName = "main";
-
-		VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
-		fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-		fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-		fragShaderStageInfo.module = fragShaderModule;
-		fragShaderStageInfo.pName = "main";
-
-		VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
-
-		//auto bindingDescription = Vertex::getBindingDescription();
-		//auto attributeDescriptions = Vertex::getAttributeDescriptions();
-
-		VkVertexInputBindingDescription bindingDescription;
-		VkVertexInputAttributeDescription attributeDescription;
-
-		VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
-		vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-		vertexInputInfo.vertexBindingDescriptionCount = 0;
-		vertexInputInfo.vertexAttributeDescriptionCount = 0;
-		//vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
-		//vertexInputInfo.pVertexAttributeDescriptions = &attributeDescription;
+	VkPipeline createOffscreenPipeline(VkDescriptorSetLayout offscreenDescriptorSetLayout) {
 
 		VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
 		inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -1965,7 +2246,7 @@ private:
 		rasterizer.rasterizerDiscardEnable = VK_FALSE;
 		rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
 		rasterizer.lineWidth = 1.0f;
-		rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+		rasterizer.cullMode = VK_CULL_MODE_NONE;
 		rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 		rasterizer.depthBiasEnable = VK_FALSE;
 
@@ -1991,9 +2272,9 @@ private:
 
 		VkPipelineDepthStencilStateCreateInfo depthStencil{};
 		depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-		depthStencil.depthTestEnable = VK_TRUE;
-		depthStencil.depthWriteEnable = VK_TRUE;
-		depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+		depthStencil.depthTestEnable = VK_FALSE;
+		depthStencil.depthWriteEnable = VK_FALSE;
+		depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
 		depthStencil.depthBoundsTestEnable = VK_FALSE;
 		depthStencil.stencilTestEnable = VK_FALSE;
 
@@ -2001,6 +2282,119 @@ private:
 			VK_DYNAMIC_STATE_VIEWPORT,
 			VK_DYNAMIC_STATE_SCISSOR
 		};
+
+		auto vertShaderCode = readFile("shader/cube.vert.spv");
+		auto fragShaderCode = readFile("shader/cube.frag.spv");
+
+		VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+		VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+		VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+		vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+		vertShaderStageInfo.module = vertShaderModule;
+		vertShaderStageInfo.pName = "main";
+
+		VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+		fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+		fragShaderStageInfo.module = fragShaderModule;
+		fragShaderStageInfo.pName = "main";
+
+		VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
+
+		std::vector<float> offscreenVertices = {
+			// back face
+			-1.0f, -1.0f, -1.0f,
+			 1.0f,  1.0f, -1.0f,
+			 1.0f, -1.0f, -1.0f,
+			 1.0f,  1.0f, -1.0f,
+			-1.0f, -1.0f, -1.0f,
+			-1.0f,  1.0f, -1.0f,
+			// front face
+			-1.0f, -1.0f,  1.0f,
+			 1.0f, -1.0f,  1.0f,
+			 1.0f,  1.0f,  1.0f,
+			 1.0f,  1.0f,  1.0f,
+			-1.0f,  1.0f,  1.0f,
+			-1.0f, -1.0f,  1.0f,
+			// left face
+			-1.0f,  1.0f,  1.0f,
+			-1.0f,  1.0f, -1.0f,
+			-1.0f, -1.0f, -1.0f,
+			-1.0f, -1.0f, -1.0f,
+			-1.0f, -1.0f,  1.0f,
+			-1.0f,  1.0f,  1.0f,
+			// right face
+			 1.0f,  1.0f,  1.0f,
+			 1.0f, -1.0f, -1.0f,
+			 1.0f,  1.0f, -1.0f,
+			 1.0f, -1.0f, -1.0f,
+			 1.0f,  1.0f,  1.0f,
+			 1.0f, -1.0f,  1.0f,
+			 // bottom face
+			 -1.0f, -1.0f, -1.0f,
+			  1.0f, -1.0f, -1.0f,
+			  1.0f, -1.0f,  1.0f,
+			  1.0f, -1.0f,  1.0f,
+			 -1.0f, -1.0f,  1.0f,
+			 -1.0f, -1.0f, -1.0f,
+			 // top face
+			 -1.0f,  1.0f, -1.0f,
+			  1.0f,  1.0f , 1.0f,
+			  1.0f,  1.0f, -1.0f,
+			  1.0f,  1.0f,  1.0f,
+			 -1.0f,  1.0f, -1.0f,
+			 -1.0f,  1.0f,  1.0f,
+		};
+
+		VkDeviceSize bufferSize = sizeof(offscreenVertices[0]) * offscreenVertices.size();
+
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+		createBuffer(
+			bufferSize,
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			stagingBuffer,
+			stagingBufferMemory
+		);
+
+		void* data;
+		vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+		memcpy(data, offscreenVertices.data(), (size_t)bufferSize);
+		vkUnmapMemory(device, stagingBufferMemory);
+
+		createBuffer(
+			bufferSize,
+			VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			offscreenVertexBuffer,
+			offscreenVertexBufferMemory
+		);
+
+		copyBuffer(stagingBuffer, offscreenVertexBuffer, bufferSize);
+		vkDestroyBuffer(device, stagingBuffer, nullptr);
+		vkFreeMemory(device, stagingBufferMemory, nullptr);
+
+		VkVertexInputBindingDescription bindingDescription{};
+		bindingDescription.binding = 0;
+		bindingDescription.stride = sizeof(float) * 3;
+		bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+		VkVertexInputAttributeDescription attributeDescription{};
+
+		attributeDescription.binding = 0;
+		attributeDescription.location = 0;
+		attributeDescription.format = VK_FORMAT_R32G32B32_SFLOAT;
+		attributeDescription.offset = 0;
+
+		VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+		vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+		vertexInputInfo.vertexBindingDescriptionCount = 1;
+		vertexInputInfo.vertexAttributeDescriptionCount = 1;
+		vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+		vertexInputInfo.pVertexAttributeDescriptions = &attributeDescription;
 
 		VkPipelineDynamicStateCreateInfo dynamicState{};
 		dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
@@ -2010,10 +2404,10 @@ private:
 		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
 		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 		pipelineLayoutInfo.setLayoutCount = 1;
-		pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
+		pipelineLayoutInfo.pSetLayouts = &offscreenDescriptorSetLayout;
 
-		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
-			throw std::runtime_error("failed to create pipeline layout!");
+		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &offscreenPipelineLayout) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create offscreen pipeline layout!");
 		}
 
 		VkPipelineRenderingCreateInfoKHR pipelineRenderingCreateInfo = {
@@ -2035,19 +2429,23 @@ private:
 		pipelineInfo.pDepthStencilState = &depthStencil;
 		pipelineInfo.pColorBlendState = &colorBlending;
 		pipelineInfo.pDynamicState = &dynamicState;
-		pipelineInfo.layout = pipelineLayout;
+		pipelineInfo.layout = offscreenPipelineLayout;
 		pipelineInfo.renderPass = NULL;
 		pipelineInfo.pNext = &pipelineRenderingCreateInfo;
 		pipelineInfo.subpass = 0;
 		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
 		pipelineInfo.basePipelineIndex = -1;
 
-		if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline) != VK_SUCCESS) {
-			throw std::runtime_error("failed to create graphics pipeline!");
+		VkPipeline offscreenPipeline;
+
+		if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &offscreenPipeline) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create offscreen graphics pipeline!");
 		}
 
 		vkDestroyShaderModule(device, vertShaderModule, nullptr);
 		vkDestroyShaderModule(device, fragShaderModule, nullptr);
+
+		return offscreenPipeline;
 	}
 
 	void loadModel() {

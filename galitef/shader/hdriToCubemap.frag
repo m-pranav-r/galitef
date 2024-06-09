@@ -1,6 +1,6 @@
 #version 450
 
-layout(location = 0) in vec2 uv;
+layout(location = 0) in vec3 localPos;
 
 layout(binding = 1) uniform sampler2D hdriTex;
 
@@ -16,7 +16,11 @@ vec2 SampleSphericalMap(vec3 v){
 }
 
 void main(){
-	vec3 color = texture(hdriTex, uv).rgb;
+	vec2 uv = SampleSphericalMap(normalize(localPos));
+	vec3 color = pow(texture(hdriTex, uv).rgb, vec3(2.2));
+
+	color = color / (color + vec3(1.0));
+	color = pow(color, vec3(1.0/2.2));
 
 	outColor = vec4(color, 1.0);
 }
