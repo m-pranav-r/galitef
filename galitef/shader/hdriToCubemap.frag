@@ -16,11 +16,9 @@ vec2 SampleSphericalMap(vec3 v){
 }
 
 void main(){
-	vec2 uv = SampleSphericalMap(normalize(localPos));
-	vec3 color = pow(texture(hdriTex, uv).rgb, vec3(2.2));
 
-	color = color / (color + vec3(1.0));
-	color = pow(color, vec3(1.0/2.2));
+	vec2 uv = SampleSphericalMap(normalize(localPos));
+	vec3 color = texture(hdriTex, uv).rgb;
 
 	outColor = vec4(color, 1.0);
 }

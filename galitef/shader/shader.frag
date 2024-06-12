@@ -14,6 +14,7 @@ layout(binding = 3) uniform sampler2D metallicRoughness;
 layout(binding = 4) uniform sampler2D normals;
 layout(binding = 5) uniform sampler2D occlusion;
 layout(binding = 6) uniform sampler2D emissive;
+layout(binding = 7) uniform samplerCube cubemap;
 
 layout (set = 0, binding = 1) uniform Material {
 	uniform float roughnessFactor;
@@ -64,6 +65,7 @@ vec3 F_Schlick(float cosTheta, vec3 F0){
 }
 
 void main(){
+	//vec2 cubemapSample = texture(cubemap, vec3(1.0f)).xy;
 	vec3 baseColor = pow(texture(baseColorTex, texCoord).rgb, vec3(2.2));
 	vec4 mrSample = texture(metallicRoughness, texCoord);
 	float roughness = mat.roughnessFactor * mrSample.g;

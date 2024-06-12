@@ -38,6 +38,7 @@
 #include <array>
 #include <unordered_map>
 
+
 #ifdef _DEBUG
 bool isDebugEnv = true;
 #else
@@ -74,7 +75,7 @@ struct Vertex {
 
 		attributeDescriptions[2].binding = 0;
 		attributeDescriptions[2].location = 2;
-		attributeDescriptions[2].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+		attributeDescriptions[2].format = VK_FORMAT_R16G16B16A16_SFLOAT;
 		attributeDescriptions[2].offset = offsetof(Vertex, tangent);
 
 		attributeDescriptions[3].binding = 0;
@@ -123,7 +124,11 @@ const std::vector<const char*> deviceExtensions = {
 	VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 	VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
 	VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
-	VK_EXT_SHADER_VIEWPORT_INDEX_LAYER_EXTENSION_NAME
+	VK_EXT_SHADER_VIEWPORT_INDEX_LAYER_EXTENSION_NAME,
+#ifdef _DEBUG_NVIDIA
+	VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME,
+	VK_NV_DEVICE_DIAGNOSTICS_CONFIG_EXTENSION_NAME
+#endif
 };
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
@@ -270,11 +275,19 @@ private:
 	VkImageView hdriImageView;
 	VkSampler hdriSampler;
 
-	VkImage diffuseCubemapImage;
-	VkDeviceMemory diffuseCubemapImageMemory;
-	VkImageView diffuseCubemapImageView;
-	VkImageView diffuseCubemapFaceImageView[6];
-	VkSampler diffuseCubemapSampler;
+	VkFormat cubemapFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
+	//VkFormat cubemapFormat = VK_FORMAT_B8G8R8A8_SRGB;
+
+	VkImage preCubemapFaceImage[6];
+	VkDeviceMemory preCubemapFaceImageMemory[6];
+	VkImageView preCubemapFaceImageView[6];
+	VkSampler preCubemapFaceSampler;
+
+	VkImage cubemap;
+	VkDeviceMemory cubemapMemory;
+	VkImageView cubemapImageView;
+	VkSampler cubemapSampler;
+
 	VkImage offscreenDepthImage;
 	VkDeviceMemory offscreenDepthImageMemory;
 	VkImageView offscreenDepthImageView;
@@ -349,8 +362,9 @@ private:
 
 			//IBL
 			createHDRIResources();
-			createCubemapResources();
+			createPreCubemapResources();
 			performOffscreenRender();
+			assembleCubemap();
 
 		//load geom data from file
 		loadModel();
@@ -425,7 +439,7 @@ private:
 
 	VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats) {
 		for (const auto& availableFormat : availableFormats) {
-			if (availableFormat.format == VK_FORMAT_R32G32B32A32_SFLOAT && availableFormat.colorSpace == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT) {
+			if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
 				return availableFormat;
 			}
 		}
@@ -761,15 +775,23 @@ private:
 		emissiveLayoutbinding.pImmutableSamplers = nullptr;
 		emissiveLayoutbinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
+		VkDescriptorSetLayoutBinding cubemapLayoutbinding{};
+		cubemapLayoutbinding.binding = 7;
+		cubemapLayoutbinding.descriptorCount = 1;
+		cubemapLayoutbinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		cubemapLayoutbinding.pImmutableSamplers = nullptr;
+		cubemapLayoutbinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-		std::array<VkDescriptorSetLayoutBinding, 7> bindings = { 
+
+		std::array<VkDescriptorSetLayoutBinding, 8> bindings = { 
 			uboLayoutBinding, 
 			materialLayoutBinding,
 			baseColorLayoutBinding,
 			metallicRoughnessLayoutBinding,
 			normalLayoutBinding,
 			occlusionLayoutBinding,
-			emissiveLayoutbinding
+			emissiveLayoutbinding,
+			cubemapLayoutbinding
 		};
 
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
@@ -949,17 +971,29 @@ private:
 		deviceFeatures.samplerAnisotropy = VK_TRUE;
 		deviceFeatures.sampleRateShading = VK_TRUE;
 
-		VkPhysicalDeviceDynamicRenderingFeaturesKHR dynamiceRenderingFeatures = {
+		VkPhysicalDeviceDynamicRenderingFeaturesKHR dynamicRenderingFeatures = {
 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR,
 			.dynamicRendering = VK_TRUE
 		};
+
+#ifdef _DEBUG_NVIDIA
+		VkDeviceDiagnosticsConfigCreateInfoNV aftermathAttachInfo{};
+		aftermathAttachInfo.sType = VK_STRUCTURE_TYPE_DEVICE_DIAGNOSTICS_CONFIG_CREATE_INFO_NV;
+		aftermathAttachInfo.flags =
+			VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_SHADER_DEBUG_INFO_BIT_NV |
+			VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_RESOURCE_TRACKING_BIT_NV |
+			VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_AUTOMATIC_CHECKPOINTS_BIT_NV |
+			VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_SHADER_ERROR_REPORTING_BIT_NV;
+
+		dynamicRenderingFeatures.pNext = &aftermathAttachInfo;
+#endif
 
 		VkDeviceCreateInfo createInfo{};
 		createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 		createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
 		createInfo.pQueueCreateInfos = queueCreateInfos.data();;
 		createInfo.pEnabledFeatures = &deviceFeatures;
-		createInfo.pNext = &dynamiceRenderingFeatures;
+		createInfo.pNext = &dynamicRenderingFeatures;
 		createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
 		createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
@@ -1332,6 +1366,13 @@ private:
 			srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
 			dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 		}
+		else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+			barrier.srcAccessMask = 0;
+			barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+			srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+			dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		}
 		else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
 			barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 			barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
@@ -1347,6 +1388,20 @@ private:
 			dstStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
 		}
 		else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL) {
+			barrier.srcAccessMask = 0;
+			barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+			srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+			dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		}
+		else if (oldLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+			barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+			srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+			dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		}
+		else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
 			barrier.srcAccessMask = 0;
 			barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
@@ -1378,6 +1433,88 @@ private:
 		);
 
 		endSingleTimeCommands(commandBuffer);
+	}
+
+	void transitionImageLayout(VkCommandBuffer commandBuffer, VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t mipLevels) {
+		VkImageMemoryBarrier barrier{};
+		VkPipelineStageFlags srcStage, dstStage;
+
+		if (newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+			barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+
+			if (hasStencilComponent(format)) {
+				barrier.subresourceRange.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+			}
+		}
+		else {
+			barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		}
+
+		if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+			barrier.srcAccessMask = 0;
+			barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+			srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+			dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		}
+		else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+			barrier.srcAccessMask = 0;
+			barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+			srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+			dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		}
+		else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+			barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+			srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+			dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		}
+		else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+			barrier.srcAccessMask = 0;
+			barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+			srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+			dstStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+		}
+		else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL) {
+			barrier.srcAccessMask = 0;
+			barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+			srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+			dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		}
+		else if (oldLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+			barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+			srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+			dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		}
+		else {
+			throw std::runtime_error("unsupported layout transition!");
+		}
+
+		barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		barrier.oldLayout = oldLayout;
+		barrier.newLayout = newLayout;
+		barrier.image = image;
+		barrier.subresourceRange.baseMipLevel = 0;
+		barrier.subresourceRange.levelCount = mipLevels;
+		barrier.subresourceRange.baseArrayLayer = 0;
+		barrier.subresourceRange.layerCount = 1;
+		barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+
+		vkCmdPipelineBarrier(
+			commandBuffer,
+			srcStage, dstStage,
+			0,
+			0, nullptr,
+			0, nullptr,
+			1, &barrier
+		);
 	}
 
 	void generateMipmaps(VkImage image, VkFormat imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipLevels) {
@@ -1617,29 +1754,6 @@ private:
 
 		stbi_image_free(pixels);
 
-		/*
-		createImage(
-			width,
-			height,
-			1,
-			VK_SAMPLE_COUNT_1_BIT,
-			VK_FORMAT_R32G32B32_SFLOAT,
-			VK_IMAGE_TILING_LINEAR,
-			VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-			hdriImage,
-			hdriImageMemory
-		);
-
-		VkImageFormatProperties formatProperties;
-
-		vkGetPhysicalDeviceImageFormatProperties(
-			physicalDevice,
-			VK_FORMAT_R32G32B32_SFLOAT,
-			VK_
-		);
-		*/
-
 		VkImageCreateInfo imageInfo{};
 		imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
 		imageInfo.imageType = VK_IMAGE_TYPE_2D;
@@ -1737,43 +1851,6 @@ private:
 		}
 		//vkDestroyBuffer(device, stagingBuffer, nullptr);
 		//vkFreeMemory(device, stagingBufferMemory, nullptr);
-	}
-
-	void createCubemapResources() {
-		//this is the color attachment
-		VkImageCreateInfo cubemapImageInfo{};
-		cubemapImageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-		cubemapImageInfo.imageType = VK_IMAGE_TYPE_2D;
-		cubemapImageInfo.extent.width = 1024;
-		cubemapImageInfo.extent.height = 1024;
-		cubemapImageInfo.extent.depth = 1;
-		cubemapImageInfo.mipLevels = 1;
-		cubemapImageInfo.arrayLayers = 6;
-		cubemapImageInfo.format = swapChainImageFormat;
-		cubemapImageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-		cubemapImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-		cubemapImageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-		cubemapImageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-		cubemapImageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-		cubemapImageInfo.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
-
-		if (vkCreateImage(device, &cubemapImageInfo, nullptr, &diffuseCubemapImage) != VK_SUCCESS) {
-			throw std::runtime_error("failed to create cubemap image!");
-		}
-
-		VkMemoryRequirements memRequirements;
-		vkGetImageMemoryRequirements(device, diffuseCubemapImage, &memRequirements);
-
-		VkMemoryAllocateInfo allocInfo{};
-		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-		allocInfo.allocationSize = memRequirements.size;
-		allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-		if (vkAllocateMemory(device, &allocInfo, nullptr, &diffuseCubemapImageMemory) != VK_SUCCESS) {
-			throw std::runtime_error("failed to allocate cubemap memory!");
-
-		}
-		vkBindImageMemory(device, diffuseCubemapImage, diffuseCubemapImageMemory, 0);
 
 		//depth attachment
 		VkFormat depthFormat = findDepthFormat();
@@ -1791,106 +1868,108 @@ private:
 		);
 		offscreenDepthImageView = createImageView(offscreenDepthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1);
 		transitionImageLayout(offscreenDepthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 1);
+	}
 
-		/*
-		*																	DO THIS BEFORE BEGINNING OFFSCREEN RENDERING!!
-		VkImageMemoryBarrier cubemapTransition = {
-			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-			.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-			.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-			.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.image = diffuseCubemapImage,
-			.subresourceRange = {
-				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-				.baseMipLevel = 0,
-				.levelCount = 1,
-				.baseArrayLayer = 0,
-				.layerCount = 6
+	void createPreCubemapResources() {
+
+		VkImageCreateInfo preCubemapImageInfo{};
+		preCubemapImageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+		preCubemapImageInfo.imageType = VK_IMAGE_TYPE_2D;
+		preCubemapImageInfo.extent.width = 1024;
+		preCubemapImageInfo.extent.height = 1024;
+		preCubemapImageInfo.extent.depth = 1;
+		preCubemapImageInfo.mipLevels = 1;
+		preCubemapImageInfo.arrayLayers = 1;
+		preCubemapImageInfo.format = cubemapFormat;
+		preCubemapImageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+		preCubemapImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		preCubemapImageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+		preCubemapImageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		preCubemapImageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+
+		for (uint16_t i = 0; i < 6; i++) {
+
+			if (vkCreateImage(device, &preCubemapImageInfo, nullptr, &preCubemapFaceImage[i]) != VK_SUCCESS) {
+				throw std::runtime_error("failed to create cubemap image!");
 			}
-		};
 
-		vkCmdPipelineBarrier(
-			commandBuffer,
-			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-			0,
-			0,
-			nullptr,
-			0,
-			nullptr,
-			1,
-			&cubemapTransition
-		);
-		*/
+			VkMemoryRequirements memRequirements;
+			vkGetImageMemoryRequirements(device, preCubemapFaceImage[i], &memRequirements);
 
-		VkSamplerCreateInfo cubemapSamplerInfo{};
-		cubemapSamplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-		cubemapSamplerInfo.magFilter = VK_FILTER_LINEAR;
-		cubemapSamplerInfo.minFilter = VK_FILTER_LINEAR;
-		cubemapSamplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-		cubemapSamplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-		cubemapSamplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-		cubemapSamplerInfo.anisotropyEnable = VK_TRUE;
-		cubemapSamplerInfo.maxAnisotropy = 1.0f;
-		cubemapSamplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-		cubemapSamplerInfo.unnormalizedCoordinates = VK_FALSE;
-		cubemapSamplerInfo.compareEnable = VK_FALSE;
-		cubemapSamplerInfo.compareOp = VK_COMPARE_OP_NEVER;
-		cubemapSamplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-		cubemapSamplerInfo.minLod = 0.0f;
-		cubemapSamplerInfo.maxLod = 1.0f;
-		cubemapSamplerInfo.mipLodBias = 0.0f;
-		cubemapSamplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+			VkMemoryAllocateInfo allocInfo{};
+			allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+			allocInfo.allocationSize = memRequirements.size;
+			allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-		if (vkCreateSampler(device, &cubemapSamplerInfo, nullptr, &diffuseCubemapSampler) != VK_SUCCESS) {
-			throw std::runtime_error("failed to create cubemap sampler!");
+			if (vkAllocateMemory(device, &allocInfo, nullptr, &preCubemapFaceImageMemory[i]) != VK_SUCCESS) {
+				throw std::runtime_error("failed to allocate cubemap memory!");
+
+			}
+			vkBindImageMemory(device, preCubemapFaceImage[i], preCubemapFaceImageMemory[i], 0);
 		}
 
-		VkImageViewCreateInfo cubemapViewInfo{};
-		cubemapViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-		cubemapViewInfo.image = diffuseCubemapImage;
-		cubemapViewInfo.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
-		cubemapViewInfo.format = swapChainImageFormat;
-		cubemapViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		cubemapViewInfo.subresourceRange.baseMipLevel = 0;
-		cubemapViewInfo.subresourceRange.levelCount = 1;
-		cubemapViewInfo.subresourceRange.baseArrayLayer = 0;
-		cubemapViewInfo.subresourceRange.layerCount = 6;
+		VkSamplerCreateInfo preCubemapSamplerInfo{};
+		preCubemapSamplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+		preCubemapSamplerInfo.magFilter = VK_FILTER_LINEAR;
+		preCubemapSamplerInfo.minFilter = VK_FILTER_LINEAR;
+		preCubemapSamplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+		preCubemapSamplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+		preCubemapSamplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+		preCubemapSamplerInfo.anisotropyEnable = VK_TRUE;
+		preCubemapSamplerInfo.maxAnisotropy = 1.0f;
+		preCubemapSamplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+		preCubemapSamplerInfo.unnormalizedCoordinates = VK_FALSE;
+		preCubemapSamplerInfo.compareEnable = VK_FALSE;
+		preCubemapSamplerInfo.compareOp = VK_COMPARE_OP_NEVER;
+		preCubemapSamplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+		preCubemapSamplerInfo.minLod = 0.0f;
+		preCubemapSamplerInfo.maxLod = 1.0f;
+		preCubemapSamplerInfo.mipLodBias = 0.0f;
+		preCubemapSamplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
 
-		if (vkCreateImageView(device, &cubemapViewInfo, nullptr, &diffuseCubemapImageView) != VK_SUCCESS) {
-			throw std::runtime_error("failed to create cubemap view!");
+		if (vkCreateSampler(device, &preCubemapSamplerInfo, nullptr, &preCubemapFaceSampler) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create preCubemap sampler!");
 		}
 
-		cubemapViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-		cubemapViewInfo.subresourceRange.layerCount = 1;
-		cubemapViewInfo.image = diffuseCubemapImage;
+		VkImageViewCreateInfo preCubemapViewInfo{};
+		preCubemapViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+		preCubemapViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		preCubemapViewInfo.format = cubemapFormat;
+		preCubemapViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		preCubemapViewInfo.subresourceRange.baseMipLevel = 0;
+		preCubemapViewInfo.subresourceRange.levelCount = 1;
+		preCubemapViewInfo.subresourceRange.baseArrayLayer = 0;
+		preCubemapViewInfo.subresourceRange.layerCount = 1;
+		preCubemapViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
 
 		for (uint32_t i = 0; i < 6; i++) {
-			cubemapViewInfo.subresourceRange.baseArrayLayer = i;
-			if (vkCreateImageView(device, &cubemapViewInfo, nullptr, &diffuseCubemapFaceImageView[i]) != VK_SUCCESS) {
-				throw std::runtime_error("failed to create cubemap face view #" + i);
+			preCubemapViewInfo.image = preCubemapFaceImage[i];
+			if (vkCreateImageView(device, &preCubemapViewInfo, nullptr, &preCubemapFaceImageView[i]) != VK_SUCCESS) {
+				throw std::runtime_error("failed to create preCubemap face view #" + i);
 			}
+
+			transitionImageLayout(preCubemapFaceImage[i], cubemapFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1);
 		}
 	}
 
-	void recordOffscreenCommandBuffers(uint32_t face, glm::mat4 viewMatrix, VkCommandBuffer offscreenCommandBuffer, void* offscreenUniformBufferMapped, VkPipeline offscreenPipeline, VkDescriptorSet offscreenDescriptorSet) {
+	void recordOffscreenCommandBuffersAndSubmit(uint32_t face, glm::mat4 viewMatrix, VkCommandBuffer offscreenCommandBuffer, void* offscreenUniformBufferMapped, VkPipeline offscreenPipeline, VkDescriptorSet offscreenDescriptorSet, VkFence fence) {
+
+		vkResetFences(device, 1, &fence);
 
 		VkCommandBufferBeginInfo beginInfo{};
 		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+		
+		//vkQueueWaitIdle(graphicsQueue);
 
-		if (vkBeginCommandBuffer(offscreenCommandBuffer, &beginInfo) != VK_SUCCESS) {
-			throw std::runtime_error("failed to begin recording offscreen command buffer!");
-		}
 		std::array<VkClearValue, 2>clearValues{};
-		clearValues[0].color = { {0.0f, 0.0f, 0.0f, 1.0f} };
+		clearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
 		clearValues[1].depthStencil = { 1.0f, 0 };
 
 		VkRenderingAttachmentInfoKHR colorAttachment = {
 			.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-			.imageView = diffuseCubemapFaceImageView[face],
-			.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
+			.imageView = preCubemapFaceImageView[face],
+			.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
 			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
 			.clearValue = clearValues[0]
@@ -1899,7 +1978,7 @@ private:
 		VkRenderingAttachmentInfoKHR depthAttachment = {
 			.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
 			.imageView = offscreenDepthImageView,
-			.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL_KHR,
+			.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
 			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
 			.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
 			.clearValue = clearValues[1]
@@ -1914,37 +1993,9 @@ private:
 			.pDepthAttachment = &depthAttachment,
 		};
 
-		//color image transition
-
-		VkImageMemoryBarrier colorImageStartTransitionBarrier = {
-			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-			.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-			.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-			.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.image = diffuseCubemapImage,
-			.subresourceRange = {
-				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-				.baseMipLevel = 0,
-				.levelCount = 1,
-				.baseArrayLayer = 0,
-				.layerCount = 1
-			}
-		};
-
-		vkCmdPipelineBarrier(
-			offscreenCommandBuffer,
-			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-			0,
-			0,
-			nullptr,
-			0,
-			nullptr,
-			1,
-			&colorImageStartTransitionBarrier
-		);
+		if (vkBeginCommandBuffer(offscreenCommandBuffer, &beginInfo) != VK_SUCCESS) {
+			throw std::runtime_error("failed to begin recording offscreen command buffer!");
+		}
 
 		vkCmdBeginRendering(offscreenCommandBuffer, &renderingInfo);
 
@@ -1953,7 +2004,6 @@ private:
 		VkBuffer vertexBuffers[] = { offscreenVertexBuffer };
 		VkDeviceSize offsets[] = { 0 };
 		vkCmdBindVertexBuffers(offscreenCommandBuffer, 0, 1, vertexBuffers, offsets);
-		//vkCmdBindIndexBuffer(offscreenCommandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
 		VkViewport viewport{};
 		viewport.x = 0.0f;
@@ -1969,14 +2019,12 @@ private:
 		scissor.extent.height = 1024;
 		scissor.extent.width = 1024;
 		vkCmdSetScissor(offscreenCommandBuffer, 0, 1, &scissor);
-		vkCmdBindDescriptorSets(offscreenCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, offscreenPipelineLayout, 0, 1, &offscreenDescriptorSet, 0, nullptr);		//figure out what the hell this is supposed to be
+		vkCmdBindDescriptorSets(offscreenCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, offscreenPipelineLayout, 0, 1, &offscreenDescriptorSet, 0, nullptr);
 		vkCmdDraw(offscreenCommandBuffer, 36, 1, 0, 0);
 
-		//add data to uniform buffer
 		UniformBufferObject ubo{};
 		ubo.model = glm::mat4(1.0);
 		ubo.proj = glm::perspective((float)(3.1417 / 2.0), 1.0f, 0.1f, 10.0f);
-		//ubo.view = glm::mat4(1.0f);
 		ubo.view = viewMatrix;
 		ubo.camPos = glm::vec3(1.0f);
 		memcpy(offscreenUniformBufferMapped, &ubo, sizeof(UniformBufferObject));
@@ -1984,8 +2032,24 @@ private:
 		vkCmdEndRendering(offscreenCommandBuffer);
 
 		if (vkEndCommandBuffer(offscreenCommandBuffer) != VK_SUCCESS) {
-			throw std::runtime_error("failed to record offscreen command buffer!");
+			throw std::runtime_error("failed to record offscreen command buffer for rendering~!");
 		}
+
+		//queue submit info
+		VkSubmitInfo submitInfo{};
+		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+		submitInfo.waitSemaphoreCount = 0;
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &offscreenCommandBuffer;
+		submitInfo.signalSemaphoreCount = 0;
+
+		VkResult dubious = vkQueueSubmit(graphicsQueue, 1, &submitInfo, fence);
+		if (dubious != VK_SUCCESS) {
+			std::cout << face << " number error:";
+			throw std::runtime_error("failed to submit draw offscreen command buffer for rendering~!\n");
+		}
+
+		vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
 	}
 
 	void performOffscreenRender() {
@@ -1993,7 +2057,6 @@ private:
 		//																																				dont forget to HANDLE DELETION LATER!!
 		VkBuffer offscreenUniformBuffer;
 		VkDeviceMemory offscreenUniformBufferMemory;
-
 
 		void* offscreenUniformBufferMapped;
 
@@ -2102,11 +2165,9 @@ private:
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(descWrites.size()), descWrites.data(), 0, nullptr);
 
 		//make offscreen pipeline
-
 		VkPipeline offscreenPipeline = createOffscreenPipeline(offscreenDescriptorSetLayout);
 		//make command buffers
 		VkCommandBuffer offscreenCommandBuffer;
-
 
 		VkCommandBufferAllocateInfo commandBufferAllocInfo{};
 		commandBufferAllocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -2120,7 +2181,6 @@ private:
 
 		vkResetCommandBuffer(offscreenCommandBuffer, 0);
 
-
 		//fences info
 		VkFence offscreenFaceRenderedFence_0, offscreenFaceRenderedFence_1;
 
@@ -2130,88 +2190,33 @@ private:
 		vkCreateFence(device, &fenceInfo, nullptr, &offscreenFaceRenderedFence_0);
 		vkCreateFence(device, &fenceInfo, nullptr, &offscreenFaceRenderedFence_1);
 
-		//queue submit info
-		VkSubmitInfo submitInfo{};
-		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-		submitInfo.waitSemaphoreCount = 0;
-		submitInfo.commandBufferCount = 1;
-		submitInfo.pCommandBuffers = &offscreenCommandBuffer;
-		submitInfo.signalSemaphoreCount = 0;
-
 		//0
 		glm::mat4 viewMatrix = glm::mat4(1.0f);
 		viewMatrix = glm::rotate(viewMatrix, glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 		viewMatrix = glm::rotate(viewMatrix, glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-		vkResetFences(device, 1, &offscreenFaceRenderedFence_0);
 
-		recordOffscreenCommandBuffers(0, viewMatrix, offscreenCommandBuffer, offscreenUniformBufferMapped, offscreenPipeline, offscreenDescriptorSet);
-
-		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, offscreenFaceRenderedFence_0) != VK_SUCCESS) {
-			throw std::runtime_error("failed to submit draw offscreen command buffer!");
-		}
-
-		vkWaitForFences(device, 1, &offscreenFaceRenderedFence_0, VK_TRUE, UINT64_MAX);
-		vkResetFences(device, 1, &offscreenFaceRenderedFence_1);
+		recordOffscreenCommandBuffersAndSubmit(0, viewMatrix, offscreenCommandBuffer, offscreenUniformBufferMapped, offscreenPipeline, offscreenDescriptorSet, offscreenFaceRenderedFence_0);
 
 		//1
 		viewMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 		viewMatrix = glm::rotate(viewMatrix, glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-		recordOffscreenCommandBuffers(1, viewMatrix, offscreenCommandBuffer, offscreenUniformBufferMapped, offscreenPipeline, offscreenDescriptorSet);
-
-		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, offscreenFaceRenderedFence_1) != VK_SUCCESS) {
-			throw std::runtime_error("failed to submit draw offscreen command buffer!");
-		}
-
-		vkWaitForFences(device, 1, &offscreenFaceRenderedFence_1, VK_TRUE, UINT64_MAX);
-		vkResetFences(device, 1, &offscreenFaceRenderedFence_0);
+		recordOffscreenCommandBuffersAndSubmit(1, viewMatrix, offscreenCommandBuffer, offscreenUniformBufferMapped, offscreenPipeline, offscreenDescriptorSet, offscreenFaceRenderedFence_1);
 
 		//2
 		viewMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-		recordOffscreenCommandBuffers(2, viewMatrix, offscreenCommandBuffer, offscreenUniformBufferMapped, offscreenPipeline, offscreenDescriptorSet);
-
-		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, offscreenFaceRenderedFence_0) != VK_SUCCESS) {
-			throw std::runtime_error("failed to submit draw offscreen command buffer!");
-		}
-
-		vkWaitForFences(device, 1, &offscreenFaceRenderedFence_0, VK_TRUE, UINT64_MAX);
-		vkResetFences(device, 1, &offscreenFaceRenderedFence_1);
+		recordOffscreenCommandBuffersAndSubmit(2, viewMatrix, offscreenCommandBuffer, offscreenUniformBufferMapped, offscreenPipeline, offscreenDescriptorSet, offscreenFaceRenderedFence_0);
 
 		//3
 		viewMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-		recordOffscreenCommandBuffers(3, viewMatrix, offscreenCommandBuffer, offscreenUniformBufferMapped, offscreenPipeline, offscreenDescriptorSet);
-
-		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, offscreenFaceRenderedFence_1) != VK_SUCCESS) {
-			throw std::runtime_error("failed to submit draw offscreen command buffer!");
-		}
-
-		vkWaitForFences(device, 1, &offscreenFaceRenderedFence_1, VK_TRUE, UINT64_MAX);
-		vkResetFences(device, 1, &offscreenFaceRenderedFence_0);
+		recordOffscreenCommandBuffersAndSubmit(3, viewMatrix, offscreenCommandBuffer, offscreenUniformBufferMapped, offscreenPipeline, offscreenDescriptorSet, offscreenFaceRenderedFence_1);
 
 		//4
 		viewMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-		recordOffscreenCommandBuffers(4, viewMatrix, offscreenCommandBuffer, offscreenUniformBufferMapped, offscreenPipeline, offscreenDescriptorSet);
-
-		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, offscreenFaceRenderedFence_0) != VK_SUCCESS) {
-			throw std::runtime_error("failed to submit draw offscreen command buffer!");
-		}
-
-		vkWaitForFences(device, 1, &offscreenFaceRenderedFence_0, VK_TRUE, UINT64_MAX);
-		vkResetFences(device, 1, &offscreenFaceRenderedFence_1);
+		recordOffscreenCommandBuffersAndSubmit(4, viewMatrix, offscreenCommandBuffer, offscreenUniformBufferMapped, offscreenPipeline, offscreenDescriptorSet, offscreenFaceRenderedFence_0);
 
 		//5
 		viewMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-		recordOffscreenCommandBuffers(5, viewMatrix, offscreenCommandBuffer, offscreenUniformBufferMapped, offscreenPipeline, offscreenDescriptorSet);
-
-		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, offscreenFaceRenderedFence_1) != VK_SUCCESS) {
-			throw std::runtime_error("failed to submit draw offscreen command buffer!");
-		}
-
-		vkWaitForFences(device, 1, &offscreenFaceRenderedFence_1, VK_TRUE, UINT64_MAX);
-
-		/*
-		VkPresentInfoKHR presentInfo{};
-		presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-		*/
+		recordOffscreenCommandBuffersAndSubmit(5, viewMatrix, offscreenCommandBuffer, offscreenUniformBufferMapped, offscreenPipeline, offscreenDescriptorSet, offscreenFaceRenderedFence_1);
 
 		/*
 		vkDestroySampler(device, hdriSampler, nullptr);
@@ -2413,7 +2418,7 @@ private:
 		VkPipelineRenderingCreateInfoKHR pipelineRenderingCreateInfo = {
 			.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR,
 			.colorAttachmentCount = 1,
-			.pColorAttachmentFormats = &swapChainImageFormat,
+			.pColorAttachmentFormats = &cubemapFormat,
 			.depthAttachmentFormat = findDepthFormat()
 		};
 
@@ -2446,6 +2451,222 @@ private:
 		vkDestroyShaderModule(device, fragShaderModule, nullptr);
 
 		return offscreenPipeline;
+	}
+
+	void assembleCubemap() {
+		VkImageCreateInfo cubemapInfo{};
+		cubemapInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+		cubemapInfo.imageType = VK_IMAGE_TYPE_2D;
+		cubemapInfo.extent.width = 1024;
+		cubemapInfo.extent.height = 1024;
+		cubemapInfo.extent.depth = 1;
+		cubemapInfo.mipLevels = 1;
+		cubemapInfo.arrayLayers = 6;
+		cubemapInfo.format = cubemapFormat;
+		cubemapInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+		cubemapInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		cubemapInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+		cubemapInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		cubemapInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+		cubemapInfo.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+
+		if (vkCreateImage(device, &cubemapInfo, nullptr, &cubemap) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create cubemap image!");
+		}
+
+		VkMemoryRequirements memRequirements;
+		vkGetImageMemoryRequirements(device, cubemap, &memRequirements);
+
+		VkMemoryAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		allocInfo.allocationSize = memRequirements.size;
+		allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+		if (vkAllocateMemory(device, &allocInfo, nullptr, &cubemapMemory) != VK_SUCCESS) {
+			throw std::runtime_error("failed to allocate cubemap image memory!");
+		}
+
+		vkBindImageMemory(device, cubemap, cubemapMemory, 0);
+
+		VkImageViewCreateInfo cubemapImageViewInfo{};
+		cubemapImageViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+		cubemapImageViewInfo.image = cubemap;
+		cubemapImageViewInfo.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
+		cubemapImageViewInfo.format = cubemapFormat;
+		cubemapImageViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		cubemapImageViewInfo.subresourceRange.baseMipLevel = 0;
+		cubemapImageViewInfo.subresourceRange.levelCount = 1;
+		cubemapImageViewInfo.subresourceRange.baseArrayLayer = 0;
+		cubemapImageViewInfo.subresourceRange.layerCount = 6;
+
+		if (vkCreateImageView(device, &cubemapImageViewInfo, nullptr, &cubemapImageView) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create cubemap image view!");
+		}
+
+		VkSamplerCreateInfo cubemapSamplerInfo{};
+		cubemapSamplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+		cubemapSamplerInfo.magFilter = VK_FILTER_LINEAR;
+		cubemapSamplerInfo.minFilter = VK_FILTER_LINEAR;
+		cubemapSamplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+		cubemapSamplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+		cubemapSamplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+		cubemapSamplerInfo.anisotropyEnable = VK_TRUE;
+		cubemapSamplerInfo.maxAnisotropy = 1.0f;
+		cubemapSamplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+		cubemapSamplerInfo.unnormalizedCoordinates = VK_FALSE;
+		cubemapSamplerInfo.compareEnable = VK_FALSE;
+		cubemapSamplerInfo.compareOp = VK_COMPARE_OP_NEVER;
+		cubemapSamplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+		cubemapSamplerInfo.minLod = 0.0f;
+		cubemapSamplerInfo.maxLod = 1.0f;
+		cubemapSamplerInfo.mipLodBias = 0.0f;
+		cubemapSamplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+
+		if (vkCreateSampler(device, &cubemapSamplerInfo, nullptr, &cubemapSampler) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create cubemap sampler!");
+		}
+
+		VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+
+		//make a buffer the size of the final cubemap
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+
+		VkDeviceSize imageSize = 1024 * 1024 * 4 * 4 * 6;
+		createBuffer(
+			imageSize,
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			stagingBuffer,
+			stagingBufferMemory
+		);
+
+		VkBufferImageCopy copyInfo;
+
+		for (uint16_t i = 0; i < 6; i++) {
+		
+			copyInfo.imageExtent.depth = 1;
+			copyInfo.imageExtent.width = 1024;
+			copyInfo.imageExtent.height = 1024;
+			copyInfo.imageOffset = { 0, 0, 0 };
+			copyInfo.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			copyInfo.imageSubresource.baseArrayLayer = 0;
+			copyInfo.imageSubresource.layerCount = 1;
+			copyInfo.imageSubresource.mipLevel = 0;
+			copyInfo.bufferOffset = i * imageSize / 6;
+			copyInfo.bufferRowLength = 0;
+			copyInfo.bufferImageHeight = 0;
+
+			transitionImageLayout(
+				commandBuffer,
+				preCubemapFaceImage[i],
+				cubemapFormat,
+				VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+				VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				1
+			);
+
+			vkCmdCopyImageToBuffer(
+				commandBuffer,
+				preCubemapFaceImage[i],
+				VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				stagingBuffer,
+				1,
+				&copyInfo
+			);
+		}
+
+		VkImageMemoryBarrier imageBarrier{};
+		imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		imageBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		imageBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+		imageBarrier.image = cubemap;
+		imageBarrier.subresourceRange.baseMipLevel = 0;
+		imageBarrier.subresourceRange.levelCount = 1;
+		imageBarrier.subresourceRange.baseArrayLayer = 0;
+		imageBarrier.subresourceRange.layerCount = 6;
+		imageBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		imageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		imageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		imageBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		imageBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+		vkCmdPipelineBarrier(
+			commandBuffer,
+			VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+			0,
+			0, nullptr,
+			0, nullptr,
+			1, &imageBarrier
+		);
+
+		VkBufferImageCopy finalCopy{};
+		finalCopy.bufferOffset = 0;
+		finalCopy.imageExtent = { 1024, 1024, 1 };
+		finalCopy.imageOffset = { 0, 0, 0 };
+		finalCopy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		finalCopy.imageSubresource.baseArrayLayer = 0;
+		finalCopy.imageSubresource.layerCount = 6;
+		finalCopy.imageSubresource.mipLevel = 0;
+		
+		vkCmdCopyBufferToImage(
+			commandBuffer,
+			stagingBuffer,
+			cubemap,
+			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			1,
+			&finalCopy
+		);
+			
+		/*
+		transitionImageLayout(
+			preCubemapFaceImage[1],
+			swapChainImageFormat,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			1
+		);
+
+
+		VkImageCopy imageCopy{};
+		imageCopy.extent.height = 1024;
+		imageCopy.extent.width = 1024;
+		imageCopy.extent.depth = 1;
+		imageCopy.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		imageCopy.srcSubresource.baseArrayLayer = 0;
+		imageCopy.srcSubresource.layerCount = 1;
+		imageCopy.srcSubresource.mipLevel = 0;
+		imageCopy.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		imageCopy.dstSubresource.baseArrayLayer = 0;
+		imageCopy.dstSubresource.layerCount = 1;
+		imageCopy.dstSubresource.mipLevel = 0;
+
+		vkCmdCopyImage(
+			commandBuffer,
+			preCubemapFaceImage[0],
+			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
+			cubemap,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			1,
+			&imageCopy
+		);
+		*/
+
+		imageBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+		imageBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		imageBarrier.srcAccessMask = 0;
+		imageBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+		vkCmdPipelineBarrier(
+			commandBuffer,
+			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+			0,
+			0, nullptr,
+			0, nullptr,
+			1, &imageBarrier
+		);
+
+		endSingleTimeCommands(commandBuffer);
 	}
 
 	void loadModel() {
@@ -2604,7 +2825,7 @@ private:
 	}
 
 	void createDescriptorPool() {
-		std::array<VkDescriptorPoolSize, 7> poolSizes{};
+		std::array<VkDescriptorPoolSize, 8> poolSizes{};
 		poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 		poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
 		poolSizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -2619,6 +2840,8 @@ private:
 		poolSizes[5].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
 		poolSizes[6].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		poolSizes[6].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+		poolSizes[7].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		poolSizes[7].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
 
 
 		VkDescriptorPoolCreateInfo poolInfo{};
@@ -2682,7 +2905,12 @@ private:
 			emissiveImageInfo.imageView = emissiveImageView;
 			emissiveImageInfo.sampler = emissiveSampler;
 
-			std::array<VkWriteDescriptorSet, 7> descWrites{};
+			VkDescriptorImageInfo cubemapInfo{};
+			cubemapInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			cubemapInfo.imageView = cubemapImageView;
+			cubemapInfo.sampler = cubemapSampler;
+
+			std::array<VkWriteDescriptorSet, 8> descWrites{};
 
 			descWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 			descWrites[0].dstSet = descriptorSets[i];
@@ -2739,6 +2967,14 @@ private:
 			descWrites[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 			descWrites[6].descriptorCount = 1;
 			descWrites[6].pImageInfo = &emissiveImageInfo;
+
+			descWrites[7].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			descWrites[7].dstSet = descriptorSets[i];
+			descWrites[7].dstBinding = 7;
+			descWrites[7].dstArrayElement = 0;
+			descWrites[7].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+			descWrites[7].descriptorCount = 1;
+			descWrites[7].pImageInfo = &cubemapInfo;
 
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(descWrites.size()), descWrites.data(), 0, nullptr);
 		}
@@ -3148,17 +3384,19 @@ private:
 		vkDestroyImage(device, hdriImage, nullptr);
 		vkFreeMemory(device, hdriImageMemory, nullptr);
 
-		vkDestroySampler(device, diffuseCubemapSampler, nullptr);
+		/*
+		vkDestroySampler(device, preCubemapFaceSampler, nullptr);
 		vkDestroyImageView(device, diffuseCubemapImageView, nullptr);
-		vkDestroyImage(device, diffuseCubemapImage, nullptr);
-		vkFreeMemory(device, diffuseCubemapImageMemory, nullptr);
+		vkDestroyImage(device, preCubemapFaceImage, nullptr);
+		vkFreeMemory(device, preCubemapFaceImageMemory, nullptr);
+		*/
 
-		vkDestroyImageView(device, diffuseCubemapFaceImageView[0], nullptr);
-		vkDestroyImageView(device, diffuseCubemapFaceImageView[1], nullptr);
-		vkDestroyImageView(device, diffuseCubemapFaceImageView[2], nullptr);
-		vkDestroyImageView(device, diffuseCubemapFaceImageView[3], nullptr);
-		vkDestroyImageView(device, diffuseCubemapFaceImageView[4], nullptr);
-		vkDestroyImageView(device, diffuseCubemapFaceImageView[5], nullptr);
+		vkDestroyImageView(device, preCubemapFaceImageView[0], nullptr);
+		vkDestroyImageView(device, preCubemapFaceImageView[1], nullptr);
+		vkDestroyImageView(device, preCubemapFaceImageView[2], nullptr);
+		vkDestroyImageView(device, preCubemapFaceImageView[3], nullptr);
+		vkDestroyImageView(device, preCubemapFaceImageView[4], nullptr);
+		vkDestroyImageView(device, preCubemapFaceImageView[5], nullptr);
 		
 
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
