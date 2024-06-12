@@ -147,7 +147,10 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="shader\compile.bat" />
+    <None Include="shader\compileHDRIToCubemap.bat" />
     <None Include="shader\copy.bat" />
+    <None Include="shader\cubemap.frag" />
+    <None Include="shader\cubemap.vert" />
     <None Include="shader\frag.spv" />
     <None Include="shader\hdriToCubemap.frag" />
     <None Include="shader\hdriToCubemap.vert" />

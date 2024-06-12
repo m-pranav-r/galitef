@@ -64,6 +64,14 @@ vec3 F_Schlick(float cosTheta, vec3 F0){
 	return F0 + (1 - F0) * term_squared * term_squared * term;
 }
 
+void main_altern(){
+	vec3 n = pow(texture(normals, texCoord).rgb, vec3(2.2));
+	//n = n * 2.0 + 1.0;
+	n = normalize(TBN * n);
+
+	outColor = texture(cubemap, n);
+}
+
 void main(){
 	//vec2 cubemapSample = texture(cubemap, vec3(1.0f)).xy;
 	vec3 baseColor = pow(texture(baseColorTex, texCoord).rgb, vec3(2.2));
@@ -106,7 +114,7 @@ void main(){
 
 		float distance = length(lights[i] - worldPos);
 		float attenuation = 1.0 / (distance * distance);
-		vec3 radiance = vec3(100.0) * attenuation;
+		vec3 radiance = vec3(30.0) * attenuation;
 
 		//calculate brdf terms
 		float D = D_GGX(n, h, roughness);

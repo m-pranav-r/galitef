@@ -40,5 +40,10 @@
     <None Include="shader\copy.bat">
       <Filter>Source Files</Filter>
     </None>
+    <None Include="shader\cubemap.frag" />
+    <None Include="shader\cubemap.vert" />
+    <None Include="shader\compileHDRIToCubemap.bat">
+      <Filter>Source Files</Filter>
+    </None>
   </ItemGroup>
 </Project>
