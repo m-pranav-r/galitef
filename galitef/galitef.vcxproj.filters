@@ -45,5 +45,7 @@
     <None Include="shader\compileHDRIToCubemap.bat">
       <Filter>Source Files</Filter>
     </None>
+    <None Include="shader\normalCubemapToDiffuse.vert" />
+    <None Include="shader\normalCubemapToDiffuse.frag" />
   </ItemGroup>
 </Project>

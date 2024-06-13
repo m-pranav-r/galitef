@@ -15,6 +15,7 @@ layout(binding = 4) uniform sampler2D normals;
 layout(binding = 5) uniform sampler2D occlusion;
 layout(binding = 6) uniform sampler2D emissive;
 layout(binding = 7) uniform samplerCube cubemap;
+layout(binding = 8) uniform samplerCube irradianceCubemap;
 
 layout (set = 0, binding = 1) uniform Material {
 	uniform float roughnessFactor;
@@ -64,6 +65,10 @@ vec3 F_Schlick(float cosTheta, vec3 F0){
 	return F0 + (1 - F0) * term_squared * term_squared * term;
 }
 
+vec3 F_SchlickLagarde(float cosTheta, vec3 F0, float roughness){
+	return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
 void main_altern(){
 	vec3 n = pow(texture(normals, texCoord).rgb, vec3(2.2));
 	//n = n * 2.0 + 1.0;
@@ -95,20 +100,22 @@ void main(){
 
 	vec3 Lo = vec3(0.0);
 
-	vec3 lights[8] = vec3[8](
+	vec3 lights[4] = vec3[4](
 							0.5 * vec3(-10.0, 10.0, 10.0),
 							0.5 * vec3( 10.0,-10.0, 10.0),
 							0.5 * vec3( 10.0, 10.0,-10.0),
-							0.5 * vec3( 10.0,-10.0,-10.0),
+							0.5 * vec3( 10.0,-10.0,-10.0)
+							/*
 							0.5 * vec3(-10.0, 10.0,-10.0),
 							0.5 * vec3(-10.0,-10.0, 10.0),
 							0.5 * vec3(-10.0,-10.0,-10.0),
 							0.5 * vec3( 10.0, 10.0, 10.0)
+							*/
 					);
 	//debugPrintfEXT("Camera position in shader: %f %f %f\n", camPos.x, camPos.y, camPos.z);
 
 	//per light shit
-	for(int i = 0; i < 8; i++){
+	for(int i = 0; i < 4; i++){
 		vec3 l = normalize(lights[i] - worldPos);
 		vec3 h = normalize(v + l);
 
@@ -132,7 +139,12 @@ void main(){
 		Lo += ((kD * baseColor / M_PI) + specular) * radiance * max(dot(n, l), 0.0);
 	}
 	
-	vec3 ambient = vec3(0.03) * baseColor * ao;
+	vec3 kS = F_SchlickLagarde(max(dot(n, v), 0.0), F0, roughness);
+	vec3 kD = 1.0 - kS;
+	vec3 irradiance = texture(irradianceCubemap, n).rgb;
+	vec3 diffuse = irradiance * baseColor;
+	vec3 ambient = kD * diffuse * ao;
+
 	vec3 color = ambient + Lo + emissiveColor;
 
 	color = color / (color + vec3(1.0));

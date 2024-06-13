@@ -321,7 +321,6 @@ private:
 	VkSampler hdriSampler;
 
 	VkFormat cubemapFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
-	//VkFormat cubemapFormat = VK_FORMAT_B8G8R8A8_SRGB;
 
 	VkImage preCubemapFaceImage[6];
 	VkDeviceMemory preCubemapFaceImageMemory[6];
@@ -333,18 +332,31 @@ private:
 	VkImageView cubemapImageView;
 	VkSampler cubemapSampler;
 
+	VkImage diffuseCubemap;
+	VkDeviceMemory diffuseCubemapMemory;
+	VkImageView diffuseCubemapImageView;
+	VkSampler diffuseCubemapSampler;
+
+	VkImage preDiffuseCubemapFaceImage[6];
+	VkDeviceMemory preDiffuseCubemapFaceImageMemory[6];
+	VkImageView preDiffuseCubemapFaceImageView[6];
+	VkSampler preDiffuseCubemapFaceSampler;
+
 	VkImage offscreenDepthImage;
 	VkDeviceMemory offscreenDepthImageMemory;
 	VkImageView offscreenDepthImageView;
 
+	VkImage diffuseDepthImage;
+	VkDeviceMemory diffuseDepthImageMemory;
+	VkImageView diffuseDepthImageView;
+
 	VkBuffer offscreenVertexBuffer;
 	VkDeviceMemory offscreenVertexBufferMemory;
 
-	VkPipelineLayout offscreenPipelineLayout;
-	VkPipelineLayout cubemapPipelineLayout;
+	VkPipelineLayout offscreenPipelineLayout, cubemapPipelineLayout, diffuseCubemapPipelineLayout;
 
-	VkPipeline cubemapPipeline;
-	VkDescriptorPool cubemapDescPool;
+	VkPipeline cubemapPipeline, diffuseCubemapPipeline;
+	VkDescriptorPool cubemapDescPool, diffuseCubemapDescPool;
 
 
 	std::vector<VkBuffer> uniformBuffers, materialBuffers;
@@ -355,7 +367,7 @@ private:
 	VkDeviceMemory offscreenUniformBufferMemory;
 	void* offscreenUniformBufferMapped;
 
-	VkDescriptorSet cubemapDescriptorSet;
+	VkDescriptorSet cubemapDescriptorSet, diffuseCubemapDescriptorSet;
 
 	std::vector<VkCommandBuffer> commandBuffers;
 	std::vector<VkSemaphore >imageAvailableSemaphores;
@@ -419,8 +431,12 @@ private:
 			//IBL
 			createHDRIResources();
 			createPreCubemapResources();
-			performOffscreenRender();
+			performOffscreenCubemapRender();
 			assembleCubemap();
+			//generateCubemapMipmaps();
+			createPreDiffuseCubemapResources();
+			performOffscreenDiffuseRender();
+			assembleDiffuseCubemap();
 
 		//load geom data from file
 		loadModel();
@@ -839,8 +855,15 @@ private:
 		cubemapLayoutbinding.pImmutableSamplers = nullptr;
 		cubemapLayoutbinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
+		VkDescriptorSetLayoutBinding diffuseCubemapLayoutbinding{};
+		diffuseCubemapLayoutbinding.binding = 8;
+		diffuseCubemapLayoutbinding.descriptorCount = 1;
+		diffuseCubemapLayoutbinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		diffuseCubemapLayoutbinding.pImmutableSamplers = nullptr;
+		diffuseCubemapLayoutbinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-		std::array<VkDescriptorSetLayoutBinding, 8> bindings = { 
+
+		std::array<VkDescriptorSetLayoutBinding, 9> bindings = { 
 			uboLayoutBinding, 
 			materialLayoutBinding,
 			baseColorLayoutBinding,
@@ -848,7 +871,8 @@ private:
 			normalLayoutBinding,
 			occlusionLayoutBinding,
 			emissiveLayoutbinding,
-			cubemapLayoutbinding
+			cubemapLayoutbinding,
+			diffuseCubemapLayoutbinding
 		};
 
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
@@ -1784,7 +1808,7 @@ private:
 	void createHDRIResources() {
 		stbi_set_flip_vertically_on_load(true);
 		int width, height, noComponents;
-		float* pixels = stbi_loadf("hdri/overcast_soil_puresky_4k.hdr", &width, &height, &noComponents, 3);
+		float* pixels = stbi_loadf("hdri/metro_noord_4k.hdr", &width, &height, &noComponents, 3);
 		if (!pixels) {
 			throw std::runtime_error("failed to load hdri!");
 		}
@@ -1969,9 +1993,9 @@ private:
 		preCubemapSamplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
 		preCubemapSamplerInfo.magFilter = VK_FILTER_LINEAR;
 		preCubemapSamplerInfo.minFilter = VK_FILTER_LINEAR;
-		preCubemapSamplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-		preCubemapSamplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-		preCubemapSamplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+		preCubemapSamplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		preCubemapSamplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		preCubemapSamplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
 		preCubemapSamplerInfo.anisotropyEnable = VK_TRUE;
 		preCubemapSamplerInfo.maxAnisotropy = 1.0f;
 		preCubemapSamplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
@@ -2109,7 +2133,7 @@ private:
 		vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
 	}
 
-	void performOffscreenRender() {
+	void performOffscreenCubemapRender() {
 		//create uniform buffers
 		//																																				dont forget to HANDLE DELETION LATER
 		VkBufferCreateInfo offscreenUniformBufferInfo;
@@ -2217,7 +2241,7 @@ private:
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(descWrites.size()), descWrites.data(), 0, nullptr);
 
 		//make offscreen pipeline
-		VkPipeline offscreenPipeline = createOffscreenPipeline(offscreenDescriptorSetLayout);
+		VkPipeline offscreenPipeline = createOffscreenCubemapPipeline(offscreenDescriptorSetLayout);
 		//make command buffers
 		VkCommandBuffer offscreenCommandBuffer;
 
@@ -2285,7 +2309,7 @@ private:
 
 	}
 
-	VkPipeline createOffscreenPipeline(VkDescriptorSetLayout offscreenDescriptorSetLayout) {
+	VkPipeline createOffscreenCubemapPipeline(VkDescriptorSetLayout offscreenDescriptorSetLayout) {
 		VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
 		inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
 		inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -2421,8 +2445,14 @@ private:
 			throw std::runtime_error("failed to create offscreen pipeline layout!");
 		}
 
+		/*
+		VkRenderPassMultiviewCreateInfo multiviewInfo{};
+		multiviewInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_MULTIVIEW_CREATE_INFO_KHR;
+		*/
+
 		VkPipelineRenderingCreateInfoKHR pipelineRenderingCreateInfo = {
 			.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR,
+			//.pNext = &multiviewInfo,
 			.colorAttachmentCount = 1,
 			.pColorAttachmentFormats = &cubemapFormat,
 			.depthAttachmentFormat = findDepthFormat()
@@ -2513,9 +2543,9 @@ private:
 		cubemapSamplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
 		cubemapSamplerInfo.magFilter = VK_FILTER_LINEAR;
 		cubemapSamplerInfo.minFilter = VK_FILTER_LINEAR;
-		cubemapSamplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-		cubemapSamplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-		cubemapSamplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+		cubemapSamplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		cubemapSamplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		cubemapSamplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
 		cubemapSamplerInfo.anisotropyEnable = VK_TRUE;
 		cubemapSamplerInfo.maxAnisotropy = 1.0f;
 		cubemapSamplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
@@ -2674,6 +2704,102 @@ private:
 
 		endSingleTimeCommands(commandBuffer);
 	}
+
+	/*
+	void generateCubemapMipmaps() {
+		VkFormatProperties formatproperties;
+		vkGetPhysicalDeviceFormatProperties(physicalDevice, cubemapFormat, &formatproperties);
+
+		if (!(formatproperties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)) {
+			throw std::runtime_error("texture image format does not support linear blitting!");
+		}
+
+		VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+
+		VkImageMemoryBarrier barrier{};
+		barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		barrier.image = cubemap;
+		barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		barrier.subresourceRange.baseArrayLayer = 0;
+		barrier.subresourceRange.layerCount = 6;
+		barrier.subresourceRange.levelCount = 1;
+
+		int32_t mipWidth = 1024;
+		int32_t mipHeight = 1024;
+
+		for (uint32_t i = 1; i < 6; i++) {
+			barrier.subresourceRange.baseMipLevel = i - 1;
+			barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+			barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+			barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+			vkCmdPipelineBarrier(
+				commandBuffer,
+				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+				0, nullptr,
+				0, nullptr,
+				1, &barrier
+			);
+
+			VkImageBlit blit{};
+			blit.srcOffsets[0] = { 0, 0, 0 };
+			blit.srcOffsets[1] = { mipWidth, mipHeight, 1 };
+			blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			blit.srcSubresource.mipLevel = i - 1;
+			blit.srcSubresource.baseArrayLayer = 0;
+			blit.srcSubresource.layerCount = 6;
+			blit.dstOffsets[0] = { 0, 0, 0 };
+			blit.dstOffsets[1] = { mipWidth > 1 ? mipWidth / 2 : 1, mipHeight > 1 ? mipHeight / 2 : 1, 1 };
+			blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			blit.dstSubresource.mipLevel = i;
+			blit.dstSubresource.baseArrayLayer = 0;
+			blit.dstSubresource.layerCount = 6;
+
+			vkCmdBlitImage(
+				commandBuffer,
+				cubemap, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				cubemap, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+				1, &blit,
+				VK_FILTER_LINEAR
+			);
+
+			barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+			barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+			barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+			vkCmdPipelineBarrier(
+				commandBuffer,
+				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+				0, nullptr,
+				0, nullptr,
+				1, &barrier
+			);
+
+			if (mipWidth > 1) mipWidth /= 2;
+			if (mipHeight > 1) mipHeight /= 2;
+		}
+
+		barrier.subresourceRange.baseMipLevel = 5;
+		barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+		barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+		vkCmdPipelineBarrier(
+			commandBuffer,
+			VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+			0, nullptr,
+			0, nullptr,
+			1, &barrier
+		);
+
+		endSingleTimeCommands(commandBuffer);
+	}
+	*/
 
 	void createCubemapRenderStuff() {
 
@@ -2909,6 +3035,707 @@ private:
 		vkDestroyShaderModule(device, fragShaderModule, nullptr);
 	}
 
+	void createPreDiffuseCubemapResources() {
+		VkImageCreateInfo preDiffuseCubemapImageInfo{};
+		preDiffuseCubemapImageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+		preDiffuseCubemapImageInfo.imageType = VK_IMAGE_TYPE_2D;
+		preDiffuseCubemapImageInfo.extent.width = 32;
+		preDiffuseCubemapImageInfo.extent.height = 32;
+		preDiffuseCubemapImageInfo.extent.depth = 1;
+		preDiffuseCubemapImageInfo.mipLevels = 1;
+		preDiffuseCubemapImageInfo.arrayLayers = 1;
+		preDiffuseCubemapImageInfo.format = cubemapFormat;
+		preDiffuseCubemapImageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+		preDiffuseCubemapImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		preDiffuseCubemapImageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+		preDiffuseCubemapImageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		preDiffuseCubemapImageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+
+		for (uint16_t i = 0; i < 6; i++) {
+
+			if (vkCreateImage(device, &preDiffuseCubemapImageInfo, nullptr, &preDiffuseCubemapFaceImage[i]) != VK_SUCCESS) {
+				throw std::runtime_error("failed to create pre diffuse cubemap image!");
+			}
+
+			VkMemoryRequirements memRequirements;
+			vkGetImageMemoryRequirements(device, preDiffuseCubemapFaceImage[i], &memRequirements);
+
+			VkMemoryAllocateInfo allocInfo{};
+			allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+			allocInfo.allocationSize = memRequirements.size;
+			allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+			if (vkAllocateMemory(device, &allocInfo, nullptr, &preDiffuseCubemapFaceImageMemory[i]) != VK_SUCCESS) {
+				throw std::runtime_error("failed to allocate pre diffuse cubemap memory!");
+
+			}
+			vkBindImageMemory(device, preDiffuseCubemapFaceImage[i], preDiffuseCubemapFaceImageMemory[i], 0);
+		}
+
+		VkSamplerCreateInfo preDiffuseCubemapSamplerInfo{};
+		preDiffuseCubemapSamplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+		preDiffuseCubemapSamplerInfo.magFilter = VK_FILTER_LINEAR;
+		preDiffuseCubemapSamplerInfo.minFilter = VK_FILTER_LINEAR;
+		preDiffuseCubemapSamplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		preDiffuseCubemapSamplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		preDiffuseCubemapSamplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		preDiffuseCubemapSamplerInfo.anisotropyEnable = VK_TRUE;
+		preDiffuseCubemapSamplerInfo.maxAnisotropy = 1.0f;
+		preDiffuseCubemapSamplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+		preDiffuseCubemapSamplerInfo.unnormalizedCoordinates = VK_FALSE;
+		preDiffuseCubemapSamplerInfo.compareEnable = VK_FALSE;
+		preDiffuseCubemapSamplerInfo.compareOp = VK_COMPARE_OP_NEVER;
+		preDiffuseCubemapSamplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+		preDiffuseCubemapSamplerInfo.minLod = 0.0f;
+		preDiffuseCubemapSamplerInfo.maxLod = 1.0f;
+		preDiffuseCubemapSamplerInfo.mipLodBias = 0.0f;
+		preDiffuseCubemapSamplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+
+		if (vkCreateSampler(device, &preDiffuseCubemapSamplerInfo, nullptr, &preDiffuseCubemapFaceSampler) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create preDiffuseCubemap sampler!");
+		}
+
+		VkImageViewCreateInfo preDiffuseCubemapViewInfo{};
+		preDiffuseCubemapViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+		preDiffuseCubemapViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		preDiffuseCubemapViewInfo.format = cubemapFormat;
+		preDiffuseCubemapViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		preDiffuseCubemapViewInfo.subresourceRange.baseMipLevel = 0;
+		preDiffuseCubemapViewInfo.subresourceRange.levelCount = 1;
+		preDiffuseCubemapViewInfo.subresourceRange.baseArrayLayer = 0;
+		preDiffuseCubemapViewInfo.subresourceRange.layerCount = 1;
+		preDiffuseCubemapViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+
+		for (uint32_t i = 0; i < 6; i++) {
+			preDiffuseCubemapViewInfo.image = preDiffuseCubemapFaceImage[i];
+			if (vkCreateImageView(device, &preDiffuseCubemapViewInfo, nullptr, &preDiffuseCubemapFaceImageView[i]) != VK_SUCCESS) {
+				throw std::runtime_error("failed to create preDiffuseCubemap face view #" + i);
+			}
+
+			transitionImageLayout(preDiffuseCubemapFaceImage[i], swapChainImageFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1);
+		}
+
+		VkFormat depthFormat = findDepthFormat();
+		createImage(
+			32,
+			32,
+			1,
+			VK_SAMPLE_COUNT_1_BIT,
+			depthFormat,
+			VK_IMAGE_TILING_OPTIMAL,
+			VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			diffuseDepthImage,
+			diffuseDepthImageMemory
+		);
+		diffuseDepthImageView = createImageView(diffuseDepthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1);
+		transitionImageLayout(diffuseDepthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 1);
+	}
+
+	void recordOffscreenDiffuseCommandBuffersAndSubmit(uint32_t face, glm::mat4 viewMatrix, VkCommandBuffer offscreenDiffuseCommandBuffer, void* offscreenDiffuseUniformBufferMapped, VkPipeline diffusePipeline, VkDescriptorSet diffuseDescriptorSet, VkFence fence) {
+		vkResetFences(device, 1, &fence);
+
+		VkCommandBufferBeginInfo beginInfo{};
+		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+		//vkQueueWaitIdle(graphicsQueue);
+
+		std::array<VkClearValue, 2>clearValues{};
+		clearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
+		clearValues[1].depthStencil = { 1.0f, 0 };
+
+		VkRenderingAttachmentInfoKHR colorAttachment = {
+			.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+			.imageView = preDiffuseCubemapFaceImageView[face],
+			.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+			.clearValue = clearValues[0]
+		};
+
+		VkRenderingAttachmentInfoKHR depthAttachment = {
+			.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+			.imageView = diffuseDepthImageView,
+			.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+			.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			.clearValue = clearValues[1]
+		};
+
+		VkRenderingInfoKHR renderingInfo = {
+			.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR,
+			.renderArea = {0, 0, 32, 32},
+			.layerCount = 1,
+			.colorAttachmentCount = 1,
+			.pColorAttachments = &colorAttachment,
+			.pDepthAttachment = &depthAttachment,
+		};
+
+		if (vkBeginCommandBuffer(offscreenDiffuseCommandBuffer, &beginInfo) != VK_SUCCESS) {
+			throw std::runtime_error("failed to begin recording diffuse command buffer!");
+		}
+
+		vkCmdBeginRendering(offscreenDiffuseCommandBuffer, &renderingInfo);
+
+		vkCmdBindPipeline(offscreenDiffuseCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, diffusePipeline);
+
+		VkBuffer vertexBuffers[] = { offscreenVertexBuffer };
+		VkDeviceSize offsets[] = { 0 };
+		vkCmdBindVertexBuffers(offscreenDiffuseCommandBuffer, 0, 1, vertexBuffers, offsets);
+
+		VkViewport viewport{};
+		viewport.x = 0.0f;
+		viewport.y = 0.0f;
+		viewport.width = static_cast<float>(32);
+		viewport.height = static_cast<float>(32);
+		viewport.minDepth = 0.0f;
+		viewport.maxDepth = 1.0f;
+		vkCmdSetViewport(offscreenDiffuseCommandBuffer, 0, 1, &viewport);
+
+		VkRect2D scissor{};
+		scissor.offset = { 0, 0 };
+		scissor.extent.height = 32;
+		scissor.extent.width = 32;
+		vkCmdSetScissor(offscreenDiffuseCommandBuffer, 0, 1, &scissor);
+		vkCmdBindDescriptorSets(offscreenDiffuseCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, diffuseCubemapPipelineLayout, 0, 1, &diffuseDescriptorSet, 0, nullptr);
+		vkCmdDraw(offscreenDiffuseCommandBuffer, 36, 1, 0, 0);
+
+		UniformBufferObject ubo{};
+		ubo.model = glm::mat4(1.0);
+		ubo.proj = glm::perspective((float)(3.1417 / 2.0), 1.0f, 0.1f, 10.0f);
+		ubo.view = viewMatrix;
+		ubo.camPos = glm::vec3(1.0f);
+		memcpy(offscreenUniformBufferMapped, &ubo, sizeof(UniformBufferObject));
+
+		vkCmdEndRendering(offscreenDiffuseCommandBuffer);
+
+		if (vkEndCommandBuffer(offscreenDiffuseCommandBuffer) != VK_SUCCESS) {
+			throw std::runtime_error("failed to record diffuse command buffer for rendering~!");
+		}
+
+		//queue submit info
+		VkSubmitInfo submitInfo{};
+		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+		submitInfo.waitSemaphoreCount = 0;
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &offscreenDiffuseCommandBuffer;
+		submitInfo.signalSemaphoreCount = 0;
+
+		VkResult dubious = vkQueueSubmit(graphicsQueue, 1, &submitInfo, fence);
+		if (dubious != VK_SUCCESS) {
+			std::cout << face << " diffuse number error:";
+			throw std::runtime_error("failed to submit draw offscreen command buffer for rendering~!\n");
+		}
+
+		vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
+	}
+
+	void performOffscreenDiffuseRender() {
+		//setup descriptors
+		//pool
+		VkDescriptorPool offscreenDescriptorPool;
+		std::array<VkDescriptorPoolSize, 2> poolSizes{};
+		poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		poolSizes[0].descriptorCount = 1;
+		poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		poolSizes[1].descriptorCount = 1;
+
+		VkDescriptorPoolCreateInfo poolInfo{};
+		poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+		poolInfo.poolSizeCount = 2;
+		poolInfo.pPoolSizes = poolSizes.data();
+		poolInfo.maxSets = 1;
+
+		if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &offscreenDescriptorPool) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create offscreen diffuse descriptor pool!");
+		}
+
+		//layout
+		VkDescriptorSetLayout offscreenDescriptorSetLayout;
+		VkDescriptorSetLayoutBinding uboLayoutBinding{};
+		uboLayoutBinding.binding = 0;
+		uboLayoutBinding.descriptorCount = 1;
+		uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		uboLayoutBinding.pImmutableSamplers = nullptr;
+		uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+		VkDescriptorSetLayoutBinding cubemapLayoutBinding{};
+		cubemapLayoutBinding.binding = 1;
+		cubemapLayoutBinding.descriptorCount = 1;
+		cubemapLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		cubemapLayoutBinding.pImmutableSamplers = nullptr;
+		cubemapLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+		std::array<VkDescriptorSetLayoutBinding, 2> bindings = {
+			uboLayoutBinding,
+			cubemapLayoutBinding
+		};
+
+		VkDescriptorSetLayoutCreateInfo layoutInfo{};
+		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		layoutInfo.bindingCount = 2;
+		layoutInfo.pBindings = bindings.data();
+
+		if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &offscreenDescriptorSetLayout) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create offscreen diffuse descriptor set layout!");
+		}
+
+		//sets
+		VkDescriptorSet offscreenDescriptorSet;
+		VkDescriptorSetAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocInfo.descriptorPool = offscreenDescriptorPool;
+		allocInfo.descriptorSetCount = 1;
+		allocInfo.pSetLayouts = &offscreenDescriptorSetLayout;
+
+		if (vkAllocateDescriptorSets(device, &allocInfo, &offscreenDescriptorSet) != VK_SUCCESS) {
+			throw std::runtime_error("failed to allocate offscreen diffuse descriptor set!");
+		}
+
+		VkDescriptorBufferInfo uniformBufferInfo{};
+		uniformBufferInfo.buffer = offscreenUniformBuffer;
+		uniformBufferInfo.offset = 0;
+		uniformBufferInfo.range = sizeof(UniformBufferObject);
+
+		VkDescriptorImageInfo cubemapImageInfo{};
+		cubemapImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		cubemapImageInfo.imageView = cubemapImageView;
+		cubemapImageInfo.sampler = cubemapSampler;
+
+		std::array<VkWriteDescriptorSet, 2> descWrites{};
+
+		descWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		descWrites[0].dstSet = offscreenDescriptorSet;
+		descWrites[0].dstBinding = 0;
+		descWrites[0].dstArrayElement = 0;
+		descWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		descWrites[0].descriptorCount = 1;
+		descWrites[0].pBufferInfo = &uniformBufferInfo;
+
+		descWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		descWrites[1].dstSet = offscreenDescriptorSet;
+		descWrites[1].dstBinding = 1;
+		descWrites[1].dstArrayElement = 0;
+		descWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		descWrites[1].descriptorCount = 1;
+		descWrites[1].pImageInfo = &cubemapImageInfo;
+
+		vkUpdateDescriptorSets(device, static_cast<uint32_t>(descWrites.size()), descWrites.data(), 0, nullptr);
+
+		//make offscreen pipeline
+		//sytart
+		VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+		inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+		inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+		inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+		VkPipelineViewportStateCreateInfo viewportState{};
+		viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+		viewportState.viewportCount = 1;
+		viewportState.scissorCount = 1;
+
+		VkPipelineRasterizationStateCreateInfo rasterizer{};
+		rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+		rasterizer.depthClampEnable = VK_FALSE;
+		rasterizer.rasterizerDiscardEnable = VK_FALSE;
+		rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+		rasterizer.lineWidth = 1.0f;
+		rasterizer.cullMode = VK_CULL_MODE_NONE;
+		rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+		rasterizer.depthBiasEnable = VK_FALSE;
+
+		VkPipelineMultisampleStateCreateInfo multisampling{};
+		multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+		multisampling.sampleShadingEnable = VK_FALSE;
+		multisampling.alphaToCoverageEnable = VK_FALSE;
+		multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+		VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+		colorBlendAttachment.colorWriteMask =
+			VK_COLOR_COMPONENT_R_BIT |
+			VK_COLOR_COMPONENT_G_BIT |
+			VK_COLOR_COMPONENT_B_BIT |
+			VK_COLOR_COMPONENT_A_BIT;
+		colorBlendAttachment.blendEnable = VK_FALSE;
+
+		VkPipelineColorBlendStateCreateInfo colorBlending{};
+		colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+		colorBlending.logicOpEnable = VK_FALSE;
+		colorBlending.attachmentCount = 1;
+		colorBlending.pAttachments = &colorBlendAttachment;
+
+		VkPipelineDepthStencilStateCreateInfo depthStencil{};
+		depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+		depthStencil.depthTestEnable = VK_FALSE;
+		depthStencil.depthWriteEnable = VK_FALSE;
+		depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+		depthStencil.depthBoundsTestEnable = VK_FALSE;
+		depthStencil.stencilTestEnable = VK_FALSE;
+
+		std::vector<VkDynamicState> dynamicStates = {
+			VK_DYNAMIC_STATE_VIEWPORT,
+			VK_DYNAMIC_STATE_SCISSOR
+		};
+
+		auto vertShaderCode = readFile("shader/diffuse.vert.spv");
+		auto fragShaderCode = readFile("shader/diffuse.frag.spv");
+
+		VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+		VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+		VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+		vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+		vertShaderStageInfo.module = vertShaderModule;
+		vertShaderStageInfo.pName = "main";
+
+		VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+		fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+		fragShaderStageInfo.module = fragShaderModule;
+		fragShaderStageInfo.pName = "main";
+
+		VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
+
+		VkVertexInputBindingDescription bindingDescription{};
+		bindingDescription.binding = 0;
+		bindingDescription.stride = sizeof(float) * 3;
+		bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+		VkVertexInputAttributeDescription attributeDescription{};
+
+		attributeDescription.binding = 0;
+		attributeDescription.location = 0;
+		attributeDescription.format = VK_FORMAT_R32G32B32_SFLOAT;
+		attributeDescription.offset = 0;
+
+		VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+		vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+		vertexInputInfo.vertexBindingDescriptionCount = 1;
+		vertexInputInfo.vertexAttributeDescriptionCount = 1;
+		vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+		vertexInputInfo.pVertexAttributeDescriptions = &attributeDescription;
+
+		VkPipelineDynamicStateCreateInfo dynamicState{};
+		dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+		dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+		dynamicState.pDynamicStates = dynamicStates.data();
+
+		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+		pipelineLayoutInfo.setLayoutCount = 1;
+		pipelineLayoutInfo.pSetLayouts = &offscreenDescriptorSetLayout;
+
+		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &diffuseCubemapPipelineLayout) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create offscreen diffuse pipeline layout!");
+		}
+
+		VkPipelineRenderingCreateInfoKHR pipelineRenderingCreateInfo = {
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR,
+			.colorAttachmentCount = 1,
+			.pColorAttachmentFormats = &cubemapFormat,
+			.depthAttachmentFormat = findDepthFormat()
+		};
+
+		VkGraphicsPipelineCreateInfo pipelineInfo{};
+		pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+		pipelineInfo.stageCount = 2;
+		pipelineInfo.pStages = shaderStages;
+		pipelineInfo.pVertexInputState = &vertexInputInfo;
+		pipelineInfo.pInputAssemblyState = &inputAssembly;
+		pipelineInfo.pViewportState = &viewportState;
+		pipelineInfo.pRasterizationState = &rasterizer;
+		pipelineInfo.pMultisampleState = &multisampling;
+		pipelineInfo.pDepthStencilState = &depthStencil;
+		pipelineInfo.pColorBlendState = &colorBlending;
+		pipelineInfo.pDynamicState = &dynamicState;
+		pipelineInfo.layout = diffuseCubemapPipelineLayout;
+		pipelineInfo.renderPass = NULL;
+		pipelineInfo.pNext = &pipelineRenderingCreateInfo;
+		pipelineInfo.subpass = 0;
+		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+		pipelineInfo.basePipelineIndex = -1;
+
+		VkPipeline offscreenPipeline;
+
+		if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &diffuseCubemapPipeline) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create offscreen diffuse graphics pipeline!");
+		}
+
+		vkDestroyShaderModule(device, vertShaderModule, nullptr);
+		vkDestroyShaderModule(device, fragShaderModule, nullptr);
+		//end
+
+		//make command buffers
+		VkCommandBuffer offscreenCommandBuffer;
+
+		VkCommandBufferAllocateInfo commandBufferAllocInfo{};
+		commandBufferAllocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		commandBufferAllocInfo.commandPool = commandPool;
+		commandBufferAllocInfo.commandBufferCount = 1;
+		commandBufferAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+
+		if (vkAllocateCommandBuffers(device, &commandBufferAllocInfo, &offscreenCommandBuffer) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create offscreen command buffers!");
+		}
+
+		vkResetCommandBuffer(offscreenCommandBuffer, 0);
+
+		//fences info
+		VkFence offscreenFaceRenderedFence_0, offscreenFaceRenderedFence_1;
+
+		VkFenceCreateInfo fenceInfo{};
+		fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+		fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+		vkCreateFence(device, &fenceInfo, nullptr, &offscreenFaceRenderedFence_0);
+		vkCreateFence(device, &fenceInfo, nullptr, &offscreenFaceRenderedFence_1);
+
+		//0
+		glm::mat4 viewMatrix = glm::mat4(1.0f);
+		viewMatrix = glm::rotate(viewMatrix, glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+		viewMatrix = glm::rotate(viewMatrix, glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+
+		recordOffscreenDiffuseCommandBuffersAndSubmit(0, viewMatrix, offscreenCommandBuffer, offscreenUniformBufferMapped, diffuseCubemapPipeline, offscreenDescriptorSet, offscreenFaceRenderedFence_0);
+
+		//1
+		viewMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+		viewMatrix = glm::rotate(viewMatrix, glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+		recordOffscreenDiffuseCommandBuffersAndSubmit(1, viewMatrix, offscreenCommandBuffer, offscreenUniformBufferMapped, diffuseCubemapPipeline, offscreenDescriptorSet, offscreenFaceRenderedFence_1);
+
+		//2
+		viewMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+		recordOffscreenDiffuseCommandBuffersAndSubmit(2, viewMatrix, offscreenCommandBuffer, offscreenUniformBufferMapped, diffuseCubemapPipeline, offscreenDescriptorSet, offscreenFaceRenderedFence_0);
+
+		//3
+		viewMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+		recordOffscreenDiffuseCommandBuffersAndSubmit(3, viewMatrix, offscreenCommandBuffer, offscreenUniformBufferMapped, diffuseCubemapPipeline, offscreenDescriptorSet, offscreenFaceRenderedFence_1);
+
+		//4
+		viewMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+		recordOffscreenDiffuseCommandBuffersAndSubmit(4, viewMatrix, offscreenCommandBuffer, offscreenUniformBufferMapped, diffuseCubemapPipeline, offscreenDescriptorSet, offscreenFaceRenderedFence_0);
+
+		//5
+		viewMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+		recordOffscreenDiffuseCommandBuffersAndSubmit(5, viewMatrix, offscreenCommandBuffer, offscreenUniformBufferMapped, diffuseCubemapPipeline, offscreenDescriptorSet, offscreenFaceRenderedFence_1);
+	}
+
+	void assembleDiffuseCubemap() {
+		VkImageCreateInfo diffuseCubemapInfo{};
+		diffuseCubemapInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+		diffuseCubemapInfo.imageType = VK_IMAGE_TYPE_2D;
+		diffuseCubemapInfo.extent.width = 32;
+		diffuseCubemapInfo.extent.height = 32;
+		diffuseCubemapInfo.extent.depth = 1;
+		diffuseCubemapInfo.mipLevels = 1;
+		diffuseCubemapInfo.arrayLayers = 6;
+		diffuseCubemapInfo.format = cubemapFormat;
+		diffuseCubemapInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+		diffuseCubemapInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		diffuseCubemapInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+		diffuseCubemapInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		diffuseCubemapInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+		diffuseCubemapInfo.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+
+		if (vkCreateImage(device, &diffuseCubemapInfo, nullptr, &diffuseCubemap) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create diffuse cubemap image!");
+		}
+
+		VkMemoryRequirements memRequirements;
+		vkGetImageMemoryRequirements(device, diffuseCubemap, &memRequirements);
+
+		VkMemoryAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		allocInfo.allocationSize = memRequirements.size;
+		allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+		if (vkAllocateMemory(device, &allocInfo, nullptr, &diffuseCubemapMemory) != VK_SUCCESS) {
+			throw std::runtime_error("failed to allocate diffuseCubemap image memory!");
+		}
+
+		vkBindImageMemory(device, diffuseCubemap, diffuseCubemapMemory, 0);
+
+		VkImageViewCreateInfo diffuseCubemapImageViewInfo{};
+		diffuseCubemapImageViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+		diffuseCubemapImageViewInfo.image = diffuseCubemap;
+		diffuseCubemapImageViewInfo.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
+		diffuseCubemapImageViewInfo.format = cubemapFormat;
+		diffuseCubemapImageViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		diffuseCubemapImageViewInfo.subresourceRange.baseMipLevel = 0;
+		diffuseCubemapImageViewInfo.subresourceRange.levelCount = 1;
+		diffuseCubemapImageViewInfo.subresourceRange.baseArrayLayer = 0;
+		diffuseCubemapImageViewInfo.subresourceRange.layerCount = 6;
+
+		if (vkCreateImageView(device, &diffuseCubemapImageViewInfo, nullptr, &diffuseCubemapImageView) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create diffuse cubemap image view!");
+		}
+
+		VkSamplerCreateInfo diffuseCubemapSamplerInfo{};
+		diffuseCubemapSamplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+		diffuseCubemapSamplerInfo.magFilter = VK_FILTER_LINEAR;
+		diffuseCubemapSamplerInfo.minFilter = VK_FILTER_LINEAR;
+		diffuseCubemapSamplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		diffuseCubemapSamplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		diffuseCubemapSamplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		diffuseCubemapSamplerInfo.anisotropyEnable = VK_TRUE;
+		diffuseCubemapSamplerInfo.maxAnisotropy = 1.0f;
+		diffuseCubemapSamplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+		diffuseCubemapSamplerInfo.unnormalizedCoordinates = VK_FALSE;
+		diffuseCubemapSamplerInfo.compareEnable = VK_FALSE;
+		diffuseCubemapSamplerInfo.compareOp = VK_COMPARE_OP_NEVER;
+		diffuseCubemapSamplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+		diffuseCubemapSamplerInfo.minLod = 0.0f;
+		diffuseCubemapSamplerInfo.maxLod = 1.0f;
+		diffuseCubemapSamplerInfo.mipLodBias = 0.0f;
+		diffuseCubemapSamplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+
+		if (vkCreateSampler(device, &diffuseCubemapSamplerInfo, nullptr, &diffuseCubemapSampler) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create diffuse cubemap sampler!");
+		}
+
+		VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+
+		//make a buffer the size of the final diffuseCubemap
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+
+		VkDeviceSize imageSize = 32 * 32 * 4 * 4 * 6;
+		createBuffer(
+			imageSize,
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			stagingBuffer,
+			stagingBufferMemory
+		);
+
+		VkBufferImageCopy copyInfo;
+
+		for (uint16_t i = 0; i < 6; i++) {
+
+			copyInfo.imageExtent.depth = 1;
+			copyInfo.imageExtent.width = 32;
+			copyInfo.imageExtent.height = 32;
+			copyInfo.imageOffset = { 0, 0, 0 };
+			copyInfo.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			copyInfo.imageSubresource.baseArrayLayer = 0;
+			copyInfo.imageSubresource.layerCount = 1;
+			copyInfo.imageSubresource.mipLevel = 0;
+			copyInfo.bufferOffset = i * imageSize / 6;
+			copyInfo.bufferRowLength = 0;
+			copyInfo.bufferImageHeight = 0;
+
+			transitionImageLayout(
+				commandBuffer,
+				preDiffuseCubemapFaceImage[i],
+				cubemapFormat,
+				VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+				VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				1
+			);
+
+			vkCmdCopyImageToBuffer(
+				commandBuffer,
+				preDiffuseCubemapFaceImage[i],
+				VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				stagingBuffer,
+				1,
+				&copyInfo
+			);
+		}
+
+		VkImageMemoryBarrier imageBarrier{};
+		imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		imageBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		imageBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+		imageBarrier.image = diffuseCubemap;
+		imageBarrier.subresourceRange.baseMipLevel = 0;
+		imageBarrier.subresourceRange.levelCount = 1;
+		imageBarrier.subresourceRange.baseArrayLayer = 0;
+		imageBarrier.subresourceRange.layerCount = 6;
+		imageBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		imageBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		imageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		imageBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		imageBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+		vkCmdPipelineBarrier(
+			commandBuffer,
+			VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+			0,
+			0, nullptr,
+			0, nullptr,
+			1, &imageBarrier
+		);
+
+		VkBufferImageCopy finalCopy{};
+		finalCopy.bufferOffset = 0;
+		finalCopy.imageExtent = { 32, 32, 1 };
+		finalCopy.imageOffset = { 0, 0, 0 };
+		finalCopy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		finalCopy.imageSubresource.baseArrayLayer = 0;
+		finalCopy.imageSubresource.layerCount = 6;
+		finalCopy.imageSubresource.mipLevel = 0;
+
+		vkCmdCopyBufferToImage(
+			commandBuffer,
+			stagingBuffer,
+			diffuseCubemap,
+			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			1,
+			&finalCopy
+		);
+
+		/*
+		transitionImageLayout(
+			preCubemapFaceImage[1],
+			swapChainImageFormat,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			1
+		);
+
+
+		VkImageCopy imageCopy{};
+		imageCopy.extent.height = 1024;
+		imageCopy.extent.width = 1024;
+		imageCopy.extent.depth = 1;
+		imageCopy.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		imageCopy.srcSubresource.baseArrayLayer = 0;
+		imageCopy.srcSubresource.layerCount = 1;
+		imageCopy.srcSubresource.mipLevel = 0;
+		imageCopy.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		imageCopy.dstSubresource.baseArrayLayer = 0;
+		imageCopy.dstSubresource.layerCount = 1;
+		imageCopy.dstSubresource.mipLevel = 0;
+
+		vkCmdCopyImage(
+			commandBuffer,
+			preCubemapFaceImage[0],
+			VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR,
+			diffuseCubemap,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			1,
+			&imageCopy
+		);
+		*/
+
+		imageBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+		imageBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		imageBarrier.srcAccessMask = 0;
+		imageBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+		vkCmdPipelineBarrier(
+			commandBuffer,
+			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+			0,
+			0, nullptr,
+			0, nullptr,
+			1, &imageBarrier
+		);
+
+		endSingleTimeCommands(commandBuffer);
+	}
+
 	void loadModel() {
 		std::cout << "trying to load model...";
 		for (int i = 0; i < model.pos.size(); i++) {
@@ -3065,7 +3892,7 @@ private:
 	}
 
 	void createDescriptorPool() {
-		std::array<VkDescriptorPoolSize, 8> poolSizes{};
+		std::array<VkDescriptorPoolSize, 9> poolSizes{};
 		poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 		poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
 		poolSizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -3082,6 +3909,8 @@ private:
 		poolSizes[6].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
 		poolSizes[7].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		poolSizes[7].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+		poolSizes[8].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		poolSizes[8].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
 
 
 		VkDescriptorPoolCreateInfo poolInfo{};
@@ -3150,7 +3979,12 @@ private:
 			cubemapInfo.imageView = cubemapImageView;
 			cubemapInfo.sampler = cubemapSampler;
 
-			std::array<VkWriteDescriptorSet, 8> descWrites{};
+			VkDescriptorImageInfo diffuseCubemapInfo{};
+			diffuseCubemapInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			diffuseCubemapInfo.imageView = diffuseCubemapImageView;
+			diffuseCubemapInfo.sampler = diffuseCubemapSampler;
+
+			std::array<VkWriteDescriptorSet, 9> descWrites{};
 
 			descWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 			descWrites[0].dstSet = descriptorSets[i];
@@ -3215,6 +4049,14 @@ private:
 			descWrites[7].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 			descWrites[7].descriptorCount = 1;
 			descWrites[7].pImageInfo = &cubemapInfo;
+
+			descWrites[8].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			descWrites[8].dstSet = descriptorSets[i];
+			descWrites[8].dstBinding = 8;
+			descWrites[8].dstArrayElement = 0;
+			descWrites[8].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+			descWrites[8].descriptorCount = 1;
+			descWrites[8].pImageInfo = &diffuseCubemapInfo;
 
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(descWrites.size()), descWrites.data(), 0, nullptr);
 		}
@@ -3446,6 +4288,7 @@ private:
 		}
 		vkResetFences(device, 1, &inFlightFences[currentFrame]);
 
+		vkResetCommandBuffer(commandBuffers[currentFrame], 0);
 		vkResetCommandBuffer(commandBuffers[currentFrame], 0);
 		recordCommandBuffer(commandBuffers[currentFrame], imageIndex);
 

@@ -154,6 +154,8 @@
     <None Include="shader\frag.spv" />
     <None Include="shader\hdriToCubemap.frag" />
     <None Include="shader\hdriToCubemap.vert" />
+    <None Include="shader\normalCubemapToDiffuse.frag" />
+    <None Include="shader\normalCubemapToDiffuse.vert" />
     <None Include="shader\shader.frag" />
     <None Include="shader\shader.vert" />
     <None Include="shader\vert.spv" />
