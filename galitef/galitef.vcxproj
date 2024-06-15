@@ -146,19 +146,28 @@
     <ClInclude Include="gltf\parser.h" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="shader\compile.bat" />
     <None Include="shader\compileHDRIToCubemap.bat" />
     <None Include="shader\copy.bat" />
-    <None Include="shader\cubemap.frag" />
-    <None Include="shader\cubemap.vert" />
-    <None Include="shader\frag.spv" />
-    <None Include="shader\hdriToCubemap.frag" />
-    <None Include="shader\hdriToCubemap.vert" />
-    <None Include="shader\normalCubemapToDiffuse.frag" />
-    <None Include="shader\normalCubemapToDiffuse.vert" />
-    <None Include="shader\shader.frag" />
-    <None Include="shader\shader.vert" />
-    <None Include="shader\vert.spv" />
+    <None Include="shader\cubemap\compile.bat" />
+    <None Include="shader\cubemap\cube.vert.spv" />
+    <None Include="shader\cubemap\cubemap.frag" />
+    <None Include="shader\cubemap\cubemap.frag.spv" />
+    <None Include="shader\cubemap\cubemap.vert" />
+    <None Include="shader\make-cubemap\compile.bat" />
+    <None Include="shader\make-cubemap\cube.frag.spv" />
+    <None Include="shader\make-cubemap\cubemap.vert.spv" />
+    <None Include="shader\make-cubemap\hdriToCubemap.frag" />
+    <None Include="shader\make-cubemap\hdriToCubemap.vert" />
+    <None Include="shader\make-diffuse\compile.bat" />
+    <None Include="shader\make-diffuse\diffuse.frag.spv" />
+    <None Include="shader\make-diffuse\diffuse.vert.spv" />
+    <None Include="shader\make-diffuse\normalCubemapToDiffuse.frag" />
+    <None Include="shader\make-diffuse\normalCubemapToDiffuse.vert" />
+    <None Include="shader\pbr\compile.bat" />
+    <None Include="shader\pbr\frag.spv" />
+    <None Include="shader\pbr\shader.frag" />
+    <None Include="shader\pbr\shader.vert" />
+    <None Include="shader\pbr\vert.spv" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

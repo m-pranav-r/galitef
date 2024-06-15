@@ -1,1 +1,1 @@
-xcopy /Y/I/H ..\shader ..\..\x64\Debug\shader
+xcopy /Y/I/H/S ..\shader ..\..\x64\Debug\shader
