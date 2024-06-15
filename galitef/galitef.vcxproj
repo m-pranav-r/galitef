@@ -163,6 +163,11 @@
     <None Include="shader\make-diffuse\diffuse.vert.spv" />
     <None Include="shader\make-diffuse\normalCubemapToDiffuse.frag" />
     <None Include="shader\make-diffuse\normalCubemapToDiffuse.vert" />
+    <None Include="shader\make-prefiltermap\compile.bat" />
+    <None Include="shader\make-prefiltermap\make-prefilter.frag" />
+    <None Include="shader\make-prefiltermap\make-prefilter.vert" />
+    <None Include="shader\make-prefiltermap\prefilter.frag.spv" />
+    <None Include="shader\make-prefiltermap\prefilter.vert.spv" />
     <None Include="shader\pbr\compile.bat" />
     <None Include="shader\pbr\frag.spv" />
     <None Include="shader\pbr\shader.frag" />

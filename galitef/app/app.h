@@ -339,10 +339,10 @@ private:
 	VkImageView diffuseCubemapImageView;
 	VkSampler diffuseCubemapSampler;
 
-	VkImage preDiffuseCubemapFaceImage[6];
-	VkDeviceMemory preDiffuseCubemapFaceImageMemory[6];
-	VkImageView preDiffuseCubemapFaceImageView[6];
-	VkSampler preDiffuseCubemapFaceSampler;
+	VkImage prefilterCubemap;
+	VkDeviceMemory prefilterCubemapMemory;
+	VkImageView prefilterCubemapImageViewPerMip[5];
+	VkSampler prefilterCubemapSampler;
 
 	VkImage offscreenDepthImage;
 	VkDeviceMemory offscreenDepthImageMemory;
@@ -432,12 +432,12 @@ private:
 
 			//IBL
 			createHDRIResources();
-			//createPreCubemapResources();
 			createCubemap();
 			performOffscreenCubemapRender();
-			//generateCubemapMipmaps();
 			createDiffuseMap();
 			performOffscreenDiffuseMapRender();
+			createPrefilterMap();
+			performPrefilterMapRender();
 
 		//load geom data from file
 		loadModel();
@@ -901,8 +901,8 @@ private:
 	}
 
 	void createGraphicsPipeline() {
-		auto vertShaderCode = readFile("shader/vert.spv");
-		auto fragShaderCode = readFile("shader/frag.spv");
+		auto vertShaderCode = readFile("shader/pbr/vert.spv");
+		auto fragShaderCode = readFile("shader/pbr/frag.spv");
 
 		VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
 		VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
@@ -2310,8 +2310,8 @@ private:
 			VK_DYNAMIC_STATE_SCISSOR
 		};
 
-		auto vertShaderCode = readFile("shader/cube.vert.spv");
-		auto fragShaderCode = readFile("shader/cube.frag.spv");
+		auto vertShaderCode = readFile("shader/make-cubemap/cube.vert.spv");
+		auto fragShaderCode = readFile("shader/make-cubemap/cube.frag.spv");
 
 		VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
 		VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
@@ -3029,6 +3029,7 @@ private:
 	}
 	*/
 
+	/*
 	void recordOffscreenDiffuseCommandBuffersAndSubmit(uint32_t face, glm::mat4 viewMatrix, VkCommandBuffer offscreenDiffuseCommandBuffer, void* offscreenDiffuseUniformBufferMapped, VkPipeline diffusePipeline, VkDescriptorSet diffuseDescriptorSet, VkFence fence) {
 		vkResetFences(device, 1, &fence);
 
@@ -3127,6 +3128,7 @@ private:
 
 		vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
 	}
+	*/
 
 	void createDiffuseMap() {
 		VkImageCreateInfo diffuseCubemapInfo{};
@@ -3349,8 +3351,8 @@ private:
 			VK_DYNAMIC_STATE_SCISSOR
 		};
 
-		auto vertShaderCode = readFile("shader/diffuse.vert.spv");
-		auto fragShaderCode = readFile("shader/diffuse.frag.spv");
+		auto vertShaderCode = readFile("shader/make-diffuse/diffuse.vert.spv");
+		auto fragShaderCode = readFile("shader/make-diffuse/diffuse.frag.spv");
 
 		VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
 		VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
@@ -3646,6 +3648,561 @@ private:
 		}
 	}
 
+	void createPrefilterMap() {
+		VkImageCreateInfo prefilterCubemapInfo{};
+		prefilterCubemapInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+		prefilterCubemapInfo.imageType = VK_IMAGE_TYPE_2D;
+		prefilterCubemapInfo.extent.width = 128;
+		prefilterCubemapInfo.extent.height = 128;
+		prefilterCubemapInfo.extent.depth = 1;
+		prefilterCubemapInfo.mipLevels = 5;
+		prefilterCubemapInfo.arrayLayers = 6;
+		prefilterCubemapInfo.format = cubemapFormat;
+		prefilterCubemapInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+		prefilterCubemapInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		prefilterCubemapInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+		prefilterCubemapInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		prefilterCubemapInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+		prefilterCubemapInfo.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+
+		if (vkCreateImage(device, &prefilterCubemapInfo, nullptr, &prefilterCubemap) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create prefilter cubemap image!");
+		}
+
+		VkMemoryRequirements memRequirements;
+		vkGetImageMemoryRequirements(device, prefilterCubemap, &memRequirements);
+
+		VkMemoryAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		allocInfo.allocationSize = memRequirements.size;
+		allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+		if (vkAllocateMemory(device, &allocInfo, nullptr, &prefilterCubemapMemory) != VK_SUCCESS) {
+			throw std::runtime_error("failed to allocate prefilterCubemap image memory!");
+		}
+
+		vkBindImageMemory(device, prefilterCubemap, prefilterCubemapMemory, 0);
+
+		VkImageViewCreateInfo prefilterCubemapImageViewInfo{};
+		prefilterCubemapImageViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+		prefilterCubemapImageViewInfo.image = prefilterCubemap;
+		prefilterCubemapImageViewInfo.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
+		prefilterCubemapImageViewInfo.format = cubemapFormat;
+		prefilterCubemapImageViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		prefilterCubemapImageViewInfo.subresourceRange.levelCount = 1;
+		prefilterCubemapImageViewInfo.subresourceRange.baseArrayLayer = 0;
+		prefilterCubemapImageViewInfo.subresourceRange.layerCount = 6;
+		
+		for (int i = 0; i < 5; i++) {
+			prefilterCubemapImageViewInfo.subresourceRange.baseMipLevel = i;
+			if (vkCreateImageView(device, &prefilterCubemapImageViewInfo, nullptr, &prefilterCubemapImageViewPerMip[i]) != VK_SUCCESS) {
+				throw std::runtime_error("failed to create prefilter cubemap image view(s)!");
+			}
+		}
+
+		VkSamplerCreateInfo prefilterCubemapSamplerInfo{};
+		prefilterCubemapSamplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+		prefilterCubemapSamplerInfo.magFilter = VK_FILTER_LINEAR;
+		prefilterCubemapSamplerInfo.minFilter = VK_FILTER_LINEAR;
+		prefilterCubemapSamplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		prefilterCubemapSamplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		prefilterCubemapSamplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		prefilterCubemapSamplerInfo.anisotropyEnable = VK_TRUE;
+		prefilterCubemapSamplerInfo.maxAnisotropy = 1.0f;
+		prefilterCubemapSamplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+		prefilterCubemapSamplerInfo.unnormalizedCoordinates = VK_FALSE;
+		prefilterCubemapSamplerInfo.compareEnable = VK_FALSE;
+		prefilterCubemapSamplerInfo.compareOp = VK_COMPARE_OP_NEVER;
+		prefilterCubemapSamplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+		prefilterCubemapSamplerInfo.minLod = 0.0f;
+		prefilterCubemapSamplerInfo.maxLod = 1.0f;
+		prefilterCubemapSamplerInfo.mipLodBias = 0.0f;
+		prefilterCubemapSamplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+
+		if (vkCreateSampler(device, &prefilterCubemapSamplerInfo, nullptr, &prefilterCubemapSampler) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create prefilter cubemap sampler!");
+		}
+	}
+
+	void performPrefilterMapRender() {
+		//setup descriptors
+		//pool
+		VkDescriptorPool prefilterDescriptorPool;
+		std::array<VkDescriptorPoolSize, 2> poolSizes{};
+		poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		poolSizes[0].descriptorCount = 1;
+		poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		poolSizes[1].descriptorCount = 1;
+
+		VkDescriptorPoolCreateInfo poolInfo{};
+		poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+		poolInfo.poolSizeCount = 2;
+		poolInfo.pPoolSizes = poolSizes.data();
+		poolInfo.maxSets = 1;
+
+		if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &prefilterDescriptorPool) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create prefilter descriptor pool!");
+		}
+
+		//layout
+		VkDescriptorSetLayout prefilterDescriptorSetLayout;
+		VkDescriptorSetLayoutBinding uboLayoutBinding{};
+		uboLayoutBinding.binding = 0;
+		uboLayoutBinding.descriptorCount = 1;
+		uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		uboLayoutBinding.pImmutableSamplers = nullptr;
+		uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+		VkDescriptorSetLayoutBinding cubemapLayoutBinding{};
+		cubemapLayoutBinding.binding = 1;
+		cubemapLayoutBinding.descriptorCount = 1;
+		cubemapLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		cubemapLayoutBinding.pImmutableSamplers = nullptr;
+		cubemapLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+		std::array<VkDescriptorSetLayoutBinding, 2> bindings = {
+			uboLayoutBinding,
+			cubemapLayoutBinding
+		};
+
+		VkDescriptorSetLayoutCreateInfo layoutInfo{};
+		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		layoutInfo.bindingCount = 2;
+		layoutInfo.pBindings = bindings.data();
+
+		if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &prefilterDescriptorSetLayout) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create prefilter descriptor set layout!");
+		}
+
+		//sets
+		VkDescriptorSet prefilterDescriptorSet;
+		VkDescriptorSetAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocInfo.descriptorPool = prefilterDescriptorPool;
+		allocInfo.descriptorSetCount = 1;
+		allocInfo.pSetLayouts = &prefilterDescriptorSetLayout;
+
+		if (vkAllocateDescriptorSets(device, &allocInfo, &prefilterDescriptorSet) != VK_SUCCESS) {
+			throw std::runtime_error("failed to allocate offscreen diffuse descriptor set!");
+		}
+
+		VkDescriptorBufferInfo cubemapBufferInfo{};
+		cubemapBufferInfo.buffer = offscreenUniformBuffer;
+		cubemapBufferInfo.offset = 0;
+		cubemapBufferInfo.range = sizeof(CubemapBufferObject);
+
+		VkDescriptorImageInfo cubemapImageInfo{};
+		cubemapImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		cubemapImageInfo.imageView = cubemapImageView;
+		cubemapImageInfo.sampler = cubemapSampler;
+
+		std::array<VkWriteDescriptorSet, 2> descWrites{};
+
+		descWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		descWrites[0].dstSet = prefilterDescriptorSet;
+		descWrites[0].dstBinding = 0;
+		descWrites[0].dstArrayElement = 0;
+		descWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		descWrites[0].descriptorCount = 1;
+		descWrites[0].pBufferInfo = &cubemapBufferInfo;
+
+		descWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		descWrites[1].dstSet = prefilterDescriptorSet;
+		descWrites[1].dstBinding = 1;
+		descWrites[1].dstArrayElement = 0;
+		descWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		descWrites[1].descriptorCount = 1;
+		descWrites[1].pImageInfo = &cubemapImageInfo;
+
+		vkUpdateDescriptorSets(device, static_cast<uint32_t>(descWrites.size()), descWrites.data(), 0, nullptr);
+
+		//make offscreen pipeline
+		//sytart
+		VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+		inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+		inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+		inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+		VkPipelineViewportStateCreateInfo viewportState{};
+		viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+		viewportState.viewportCount = 1;
+		viewportState.scissorCount = 1;
+
+		VkPipelineRasterizationStateCreateInfo rasterizer{};
+		rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+		rasterizer.depthClampEnable = VK_FALSE;
+		rasterizer.rasterizerDiscardEnable = VK_FALSE;
+		rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+		rasterizer.lineWidth = 1.0f;
+		rasterizer.cullMode = VK_CULL_MODE_NONE;
+		rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+		rasterizer.depthBiasEnable = VK_FALSE;
+
+		VkPipelineMultisampleStateCreateInfo multisampling{};
+		multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+		multisampling.sampleShadingEnable = VK_FALSE;
+		multisampling.alphaToCoverageEnable = VK_FALSE;
+		multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+		VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+		colorBlendAttachment.colorWriteMask =
+			VK_COLOR_COMPONENT_R_BIT |
+			VK_COLOR_COMPONENT_G_BIT |
+			VK_COLOR_COMPONENT_B_BIT |
+			VK_COLOR_COMPONENT_A_BIT;
+		colorBlendAttachment.blendEnable = VK_FALSE;
+
+		VkPipelineColorBlendStateCreateInfo colorBlending{};
+		colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+		colorBlending.logicOpEnable = VK_FALSE;
+		colorBlending.attachmentCount = 1;
+		colorBlending.pAttachments = &colorBlendAttachment;
+
+		VkPipelineDepthStencilStateCreateInfo depthStencil{};
+		depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+		depthStencil.depthTestEnable = VK_FALSE;
+		depthStencil.depthWriteEnable = VK_FALSE;
+		depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+		depthStencil.depthBoundsTestEnable = VK_FALSE;
+		depthStencil.stencilTestEnable = VK_FALSE;
+
+		std::vector<VkDynamicState> dynamicStates = {
+			VK_DYNAMIC_STATE_VIEWPORT,
+			VK_DYNAMIC_STATE_SCISSOR
+		};
+
+		auto vertShaderCode = readFile("shader/make-prefiltermap/prefilter.vert.spv");
+		auto fragShaderCode = readFile("shader/make-prefiltermap/prefilter.frag.spv");
+
+		VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+		VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+		VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+		vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+		vertShaderStageInfo.module = vertShaderModule;
+		vertShaderStageInfo.pName = "main";
+
+		VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+		fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+		fragShaderStageInfo.module = fragShaderModule;
+		fragShaderStageInfo.pName = "main";
+
+		VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
+
+		VkVertexInputBindingDescription bindingDescription{};
+		bindingDescription.binding = 0;
+		bindingDescription.stride = sizeof(float) * 3;
+		bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+		VkVertexInputAttributeDescription attributeDescription{};
+
+		attributeDescription.binding = 0;
+		attributeDescription.location = 0;
+		attributeDescription.format = VK_FORMAT_R32G32B32_SFLOAT;
+		attributeDescription.offset = 0;
+
+		VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+		vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+		vertexInputInfo.vertexBindingDescriptionCount = 1;
+		vertexInputInfo.vertexAttributeDescriptionCount = 1;
+		vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+		vertexInputInfo.pVertexAttributeDescriptions = &attributeDescription;
+
+		VkPipelineDynamicStateCreateInfo dynamicState{};
+		dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+		dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+		dynamicState.pDynamicStates = dynamicStates.data();
+
+		VkPushConstantRange pushConstant;
+		pushConstant.offset = 0;
+		pushConstant.size = sizeof(float);
+		pushConstant.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+		pipelineLayoutInfo.setLayoutCount = 1;
+		pipelineLayoutInfo.pSetLayouts = &prefilterDescriptorSetLayout;
+		pipelineLayoutInfo.pushConstantRangeCount = 1;
+		pipelineLayoutInfo.pPushConstantRanges = &pushConstant;
+
+		VkPipelineLayout prefilterPipelineLayout;
+
+		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &prefilterPipelineLayout) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create offscreen diffuse pipeline layout!");
+		}
+
+		std::array<VkAttachmentDescription, 2> attachments;
+
+		attachments[0].format = cubemapFormat;
+		attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
+		attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		attachments[0].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		attachments[0].flags = 0;
+
+		attachments[1].format = findDepthFormat();
+		attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
+		attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		attachments[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+		attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		attachments[1].flags = 0;
+
+		VkAttachmentReference colorReference = {
+			.attachment = 0,
+			.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+		};
+
+		VkAttachmentReference depthReference = {
+			.attachment = 1,
+			.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+		};
+
+		VkSubpassDescription subpassDesc = {
+			.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+			.colorAttachmentCount = 1,
+			.pColorAttachments = &colorReference,
+			.pDepthStencilAttachment = &depthReference
+		};
+
+		VkSubpassDependency dependency;
+
+		dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+		dependency.dstSubpass = 0;
+		dependency.srcStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+		dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		dependency.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+		dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		dependency.dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+		VkRenderPassCreateInfo renderPassInfo{};
+		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+		renderPassInfo.attachmentCount = 2;
+		renderPassInfo.pAttachments = attachments.data();
+		renderPassInfo.subpassCount = 1;
+		renderPassInfo.pSubpasses = &subpassDesc;
+		renderPassInfo.dependencyCount = 1;
+		renderPassInfo.pDependencies = &dependency;
+
+		uint32_t viewMask = 0b00111111;
+
+		VkRenderPassMultiviewCreateInfo multiViewInfo{};
+		multiViewInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_MULTIVIEW_CREATE_INFO;
+		multiViewInfo.subpassCount = 1;
+		multiViewInfo.pViewMasks = &viewMask;
+		multiViewInfo.correlationMaskCount = 0;
+
+		renderPassInfo.pNext = &multiViewInfo;
+
+		VkRenderPass prefilterRenderPass;
+
+		if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &prefilterRenderPass) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create prefilter render pass!");
+		}
+
+		const uint32_t PREFILTER_MAP_BASE_DIMENSION = 128;
+
+		VkFramebuffer prefilterFramebufferPerMip[5];
+
+		for (int i = 0; i < 5; i++) {
+			std::array<VkImageView, 2> framebufferAttachments;
+			framebufferAttachments[0] = prefilterCubemapImageViewPerMip[i];
+			framebufferAttachments[1] = offscreenDepthImageView;
+
+			VkFramebufferCreateInfo framebufferInfo{};
+			framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+			framebufferInfo.renderPass = prefilterRenderPass;
+			framebufferInfo.attachmentCount = 2;
+			framebufferInfo.pAttachments = framebufferAttachments.data();
+			framebufferInfo.width = PREFILTER_MAP_BASE_DIMENSION * pow(0.5, i);
+			framebufferInfo.height = PREFILTER_MAP_BASE_DIMENSION * pow(0.5, i);
+			framebufferInfo.layers = 1;
+
+			if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &prefilterFramebufferPerMip[i]) != VK_SUCCESS) {
+				throw std::runtime_error("failed to create diffuse cubemap framebuffer!");
+			}
+		}
+
+		VkGraphicsPipelineCreateInfo pipelineInfo{};
+		pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+		pipelineInfo.stageCount = 2;
+		pipelineInfo.pStages = shaderStages;
+		pipelineInfo.pVertexInputState = &vertexInputInfo;
+		pipelineInfo.pInputAssemblyState = &inputAssembly;
+		pipelineInfo.pViewportState = &viewportState;
+		pipelineInfo.pRasterizationState = &rasterizer;
+		pipelineInfo.pMultisampleState = &multisampling;
+		pipelineInfo.pDepthStencilState = &depthStencil;
+		pipelineInfo.pColorBlendState = &colorBlending;
+		pipelineInfo.pDynamicState = &dynamicState;
+		pipelineInfo.layout = prefilterPipelineLayout;
+		pipelineInfo.renderPass = prefilterRenderPass;
+		pipelineInfo.pNext = NULL;
+		pipelineInfo.subpass = 0;
+		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+		pipelineInfo.basePipelineIndex = -1;
+
+		VkPipeline prefilterPipeline;
+
+		if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &prefilterPipeline) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create offscreen diffuse graphics pipeline!");
+		}
+
+		vkDestroyShaderModule(device, vertShaderModule, nullptr);
+		vkDestroyShaderModule(device, fragShaderModule, nullptr);
+		//end
+
+		//make command buffers
+		VkCommandBuffer offscreenCommandBuffer;
+
+		VkCommandBufferAllocateInfo commandBufferAllocInfo{};
+		commandBufferAllocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		commandBufferAllocInfo.commandPool = commandPool;
+		commandBufferAllocInfo.commandBufferCount = 1;
+		commandBufferAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+
+		if (vkAllocateCommandBuffers(device, &commandBufferAllocInfo, &offscreenCommandBuffer) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create offscreen command buffers!");
+		}
+
+		vkResetCommandBuffer(offscreenCommandBuffer, 0);
+
+		VkCommandBufferBeginInfo beginInfo{};
+		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+		//vkQueueWaitIdle(graphicsQueue);
+
+		std::array<VkClearValue, 2>clearValues{};
+		clearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
+		clearValues[1].depthStencil = { 1.0f, 0 };
+
+		CubemapBufferObject cbo{};
+		cbo.model = glm::mat4(1.0);
+		cbo.proj = glm::perspective((float)(3.1417 / 2.0), 1.0f, 0.1f, 10.0f);
+
+		//0
+		glm::mat4 view0 = glm::mat4(1.0f);
+		view0 = glm::rotate(view0, glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+		view0 = glm::rotate(view0, glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+		cbo.view[0] = view0;
+
+		//1
+		glm::mat4 view1 = glm::mat4(1.0f);
+		view1 = glm::rotate(view1, glm::radians(-90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+		view1 = glm::rotate(view1, glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+		cbo.view[1] = view1;
+
+		//2
+		glm::mat4 view2 = glm::mat4(1.0f);
+		view2 = glm::rotate(view2, glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+		cbo.view[2] = view2;
+
+		//3
+		glm::mat4 view3 = glm::mat4(1.0f);
+		view3 = glm::rotate(view3, glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+		cbo.view[3] = view3;
+
+		//4
+		glm::mat4 view4 = glm::mat4(1.0f);
+		view4 = glm::rotate(view4, glm::radians(180.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+		cbo.view[4] = view4;
+
+
+		//5
+		glm::mat4 view5 = glm::mat4(1.0f);
+		view5 = glm::rotate(view5, glm::radians(180.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+		cbo.view[5] = view5;
+
+		memcpy(offscreenUniformBufferMapped, &cbo, sizeof(CubemapBufferObject));
+
+		uint32_t workingDimension = PREFILTER_MAP_BASE_DIMENSION;
+
+		VkFence prefilterMipRenderedFence;
+
+		VkFenceCreateInfo fenceInfo{};
+		fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+		fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+		vkCreateFence(device, &fenceInfo, nullptr, &prefilterMipRenderedFence);
+
+
+		for (int i = 0; i < 5; i++) {
+
+			vkWaitForFences(device, 1, &prefilterMipRenderedFence, VK_TRUE, UINT64_MAX);
+
+			VkRenderPassBeginInfo mvRenderpassbeginInfo{};
+			mvRenderpassbeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+			mvRenderpassbeginInfo.renderPass = prefilterRenderPass;
+			mvRenderpassbeginInfo.renderArea.offset = { 0, 0 };
+			mvRenderpassbeginInfo.renderArea.extent = { workingDimension, workingDimension };
+			mvRenderpassbeginInfo.clearValueCount = 2;
+			mvRenderpassbeginInfo.pClearValues = clearValues.data();
+			mvRenderpassbeginInfo.framebuffer = prefilterFramebufferPerMip[i];
+
+			if (vkBeginCommandBuffer(offscreenCommandBuffer, &beginInfo) != VK_SUCCESS) {
+				throw std::runtime_error("failed to begin recording cubemap command buffer!");
+			}
+
+			vkCmdBeginRenderPass(offscreenCommandBuffer, &mvRenderpassbeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+			vkCmdBindPipeline(offscreenCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, prefilterPipeline);
+
+			VkBuffer vertexBuffers[] = { offscreenVertexBuffer };
+			VkDeviceSize offsets[] = { 0 };
+			vkCmdBindVertexBuffers(offscreenCommandBuffer, 0, 1, vertexBuffers, offsets);
+
+			VkViewport viewport{};
+			viewport.x = 0.0f;
+			viewport.y = 0.0f;
+			viewport.width = static_cast<float>(workingDimension);
+			viewport.height = static_cast<float>(workingDimension);
+			viewport.minDepth = 0.0f;
+			viewport.maxDepth = 1.0f;
+			vkCmdSetViewport(offscreenCommandBuffer, 0, 1, &viewport);
+
+			VkRect2D scissor{};
+			scissor.offset = { 0, 0 };
+			scissor.extent.height = workingDimension;
+			scissor.extent.width = workingDimension;
+			vkCmdSetScissor(offscreenCommandBuffer, 0, 1, &scissor);
+			vkCmdBindDescriptorSets(offscreenCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, prefilterPipelineLayout, 0, 1, &prefilterDescriptorSet, 0, nullptr);
+			float roughness = (float)i/(float)5;
+			vkCmdPushConstants(offscreenCommandBuffer, prefilterPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(float), &roughness);
+			vkCmdDraw(offscreenCommandBuffer, 36, 1, 0, 0);
+
+			vkCmdEndRenderPass(offscreenCommandBuffer);
+
+			if (vkEndCommandBuffer(offscreenCommandBuffer) != VK_SUCCESS) {
+				throw std::runtime_error("failed to record prefilter cubemap command buffer for rendering~!");
+			}
+
+			//queue submit info
+			VkSubmitInfo submitInfo{};
+			submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+			submitInfo.waitSemaphoreCount = 0;
+			submitInfo.commandBufferCount = 1;
+			submitInfo.pCommandBuffers = &offscreenCommandBuffer;
+			submitInfo.signalSemaphoreCount = 0;
+
+			vkResetFences(device, 1, &prefilterMipRenderedFence);
+
+			VkResult dubious = vkQueueSubmit(graphicsQueue, 1, &submitInfo, prefilterMipRenderedFence);
+			if (dubious != VK_SUCCESS) {
+				throw std::runtime_error("failed to submit draw prefilter cubemap command buffer for rendering~!\n");
+			}
+
+			workingDimension /= 2;
+		}
+	}
+
 	void createCubemapRenderStuff() {
 
 		//handle descriptors
@@ -3793,8 +4350,8 @@ private:
 		};
 
 		//make cubemap shaders
-		auto vertShaderCode = readFile("shader/cubemap.vert.spv");
-		auto fragShaderCode = readFile("shader/cubemap.frag.spv");
+		auto vertShaderCode = readFile("shader/cubemap/cubemap.vert.spv");
+		auto fragShaderCode = readFile("shader/cubemap/cubemap.frag.spv");
 
 		VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
 		VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);

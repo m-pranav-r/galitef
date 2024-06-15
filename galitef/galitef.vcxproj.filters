@@ -62,5 +62,12 @@
     <None Include="shader\pbr\shader.frag" />
     <None Include="shader\pbr\shader.vert" />
     <None Include="shader\pbr\vert.spv" />
+    <None Include="shader\make-prefiltermap\make-prefilter.vert" />
+    <None Include="shader\make-prefiltermap\make-prefilter.frag" />
+    <None Include="shader\make-prefiltermap\compile.bat">
+      <Filter>Source Files</Filter>
+    </None>
+    <None Include="shader\make-prefiltermap\prefilter.vert.spv" />
+    <None Include="shader\make-prefiltermap\prefilter.frag.spv" />
   </ItemGroup>
 </Project>
