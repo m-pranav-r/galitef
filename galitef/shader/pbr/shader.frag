@@ -16,6 +16,8 @@ layout(binding = 5) uniform sampler2D occlusion;
 layout(binding = 6) uniform sampler2D emissive;
 layout(binding = 7) uniform samplerCube cubemap;
 layout(binding = 8) uniform samplerCube irradianceCubemap;
+layout(binding = 9) uniform samplerCube prefilterCubemap;
+layout(binding = 10) uniform sampler2D brdfLUT;
 
 layout (set = 0, binding = 1) uniform Material {
 	uniform float roughnessFactor;
@@ -69,18 +71,17 @@ vec3 F_SchlickLagarde(float cosTheta, vec3 F0, float roughness){
 	return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
-void main_altern(){
-	vec3 n = pow(texture(normals, texCoord).rgb, vec3(2.2));
-	//n = n * 2.0 + 1.0;
-	n = normalize(TBN * n);
+void main_alt(){
+	vec4 mrSample = texture(metallicRoughness, texCoord);
+	float roughness = mat.roughnessFactor * mrSample.g;
+	float metallic = mat.metallicFactor * mrSample.b;
 
-	outColor = texture(cubemap, n);
+	outColor = vec4(vec3(roughness), 1.0);
 }
 
 void main(){
-	//vec2 cubemapSample = texture(cubemap, vec3(1.0f)).xy;
 	vec3 baseColor = pow(texture(baseColorTex, texCoord).rgb, vec3(2.2));
-	vec4 mrSample = texture(metallicRoughness, texCoord);
+	vec4 mrSample = pow(texture(metallicRoughness, texCoord), vec4(1/2.2));
 	float roughness = mat.roughnessFactor * mrSample.g;
 	float metallic = mat.metallicFactor * mrSample.b;
 	float ao = texture(occlusion, texCoord).r;
@@ -89,28 +90,19 @@ void main(){
 	vec3 F0 = mix(vec3(0.04), baseColor, metallic);
 	
 	vec3 n = pow(texture(normals, texCoord).rgb, vec3(2.2));
-	//n = n * 2.0 + 1.0;
 	n = normalize(TBN * n);
-
-	//vec3 n = normalize(normal);
-
-	//outColor = vec4(n, 1.0);
+	
 	
 	vec3 v = normalize(camPos - worldPos);
 
 	vec3 Lo = vec3(0.0);
 
+	/*
 	vec3 lights[4] = vec3[4](
 							0.5 * vec3(-10.0, 10.0, 10.0),
 							0.5 * vec3( 10.0,-10.0, 10.0),
 							0.5 * vec3( 10.0, 10.0,-10.0),
 							0.5 * vec3( 10.0,-10.0,-10.0)
-							/*
-							0.5 * vec3(-10.0, 10.0,-10.0),
-							0.5 * vec3(-10.0,-10.0, 10.0),
-							0.5 * vec3(-10.0,-10.0,-10.0),
-							0.5 * vec3( 10.0, 10.0, 10.0)
-							*/
 					);
 	//debugPrintfEXT("Camera position in shader: %f %f %f\n", camPos.x, camPos.y, camPos.z);
 
@@ -144,6 +136,24 @@ void main(){
 	vec3 irradiance = texture(irradianceCubemap, n).rgb;
 	vec3 diffuse = irradiance * baseColor;
 	vec3 ambient = kD * diffuse * ao;
+	*/
+
+	vec3 F = F_SchlickLagarde(max(dot(n, v), 0.0), F0, roughness);
+
+	vec3 kS = F;
+	vec3 kD = 1.0 - kS;
+	kD *= 1.0 - metallic;
+
+	vec3 irradiance = texture(irradianceCubemap, n).rgb;
+	vec3 diffuse = irradiance * baseColor;
+
+	vec3 r = reflect(-v, n);
+	const float MAX_REFLECTION_LOD = 4.0;
+	vec3 prefilteredColor = textureLod(prefilterCubemap, r, roughness * MAX_REFLECTION_LOD).rgb;
+	vec2 brdf = texture(brdfLUT, vec2(max(dot(n, v), 0.0), roughness)).rg;
+	vec3 specular = prefilteredColor * (F * brdf.x + brdf.y) / 10;
+
+	vec3 ambient = (kD * diffuse + specular) * ao;
 
 	vec3 color = ambient + Lo + emissiveColor;
 

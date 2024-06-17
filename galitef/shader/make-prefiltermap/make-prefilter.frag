@@ -12,6 +12,18 @@ layout (location = 0) out vec4 outColor;
 
 const float M_PI = 3.14159265359;
 
+float D_GGX(float NdotH, float roughness){
+	float alpha = roughness * roughness;
+	float alpha_squared = alpha * alpha;
+	float NdotH2 = NdotH * NdotH;
+
+	float num = alpha_squared;
+	float denom = (NdotH2 * (alpha_squared - 1.0) + 1.0);
+	denom = M_PI * denom * denom;
+
+	return num / denom;
+}
+
 float RadicalInverse_Vdc(uint bits){
 	bits = (bits << 16u) | (bits >> 16u);
 	bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
@@ -57,10 +69,19 @@ void main(){
 		vec2 Xi = Hammersley(i, noSamples);
 		vec3 H = ImportanceSampleGGX(Xi, N, rd.roughness);
 		vec3 L = normalize(2.0 * dot(V, H) * H - V);
+		float NdotH = max(dot(N, H), 0.0);
+		float D = D_GGX(NdotH, rd.roughness);
+		float pdf = (D * NdotH / (4.0 * max(dot(H, V), 0.0))) + 0.0001;
+
+		float resolution = 1024;
+		float saTexel = 4.0 * M_PI / (6.0 * resolution * resolution);
+		float saSample = 1.0 / (float(noSamples) * pdf + 0.0001);
+
+		float mipLevel = rd.roughness == 0.0 ? 0.0 : 0.5 * log2(saSample / saTexel);
 
 		float NdotL = max(dot(N, L), 0.0);
 		if(NdotL > 0.0){
-			prefilteredColor += texture(cubemap, L).rgb * NdotL;
+			prefilteredColor += textureLod(cubemap, L, mipLevel).rgb * NdotL;
 			totalWeight += NdotL;
 		}
 	}

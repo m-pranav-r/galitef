@@ -153,6 +153,9 @@
     <None Include="shader\cubemap\cubemap.frag" />
     <None Include="shader\cubemap\cubemap.frag.spv" />
     <None Include="shader\cubemap\cubemap.vert" />
+    <None Include="shader\make-brdf\compile.bat" />
+    <None Include="shader\make-brdf\generateBRDFLUT.frag" />
+    <None Include="shader\make-brdf\generateBRDFLUT.vert" />
     <None Include="shader\make-cubemap\compile.bat" />
     <None Include="shader\make-cubemap\cube.frag.spv" />
     <None Include="shader\make-cubemap\cubemap.vert.spv" />

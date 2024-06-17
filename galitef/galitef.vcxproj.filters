@@ -69,5 +69,10 @@
     </None>
     <None Include="shader\make-prefiltermap\prefilter.vert.spv" />
     <None Include="shader\make-prefiltermap\prefilter.frag.spv" />
+    <None Include="shader\make-brdf\generateBRDFLUT.vert" />
+    <None Include="shader\make-brdf\generateBRDFLUT.frag" />
+    <None Include="shader\make-brdf\compile.bat">
+      <Filter>Source Files</Filter>
+    </None>
   </ItemGroup>
 </Project>
