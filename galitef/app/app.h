@@ -361,11 +361,44 @@ private:
 	VkBuffer offscreenVertexBuffer;
 	VkDeviceMemory offscreenVertexBufferMemory;
 
-	VkPipelineLayout offscreenPipelineLayout, cubemapPipelineLayout, diffuseCubemapPipelineLayout;
+	VkPipelineLayout cubemapPipelineLayout, diffuseCubemapPipelineLayout;
 
 	VkPipeline cubemapPipeline, diffuseCubemapPipeline;
-	VkDescriptorPool cubemapDescPool, diffuseCubemapDescPool;
+	VkDescriptorPool cubemapDescPool;
 
+	VkDescriptorPool cubemapCreateDescriptorPool;
+	VkDescriptorSetLayout cubemapCreateDescriptorSetLayout;
+	VkDescriptorSet cubemapCreateDescriptorSet;
+	VkRenderPass cubemapCreateRenderPass;
+	VkFramebuffer cubemapCreateFramebuffer;
+	VkPipeline cubemapCreatePipeline;
+	VkPipelineLayout cubemapCreatePipelineLayout;
+	VkCommandBuffer cubemapCreateCommandBuffer;
+
+	VkDescriptorPool diffuseDescriptorPool;
+	VkDescriptorSetLayout diffuseDescriptorSetLayout;
+	VkDescriptorSet diffuseDescriptorSet;
+	VkRenderPass diffuseRenderPass;
+	VkFramebuffer diffuseFramebuffer;
+
+	VkDescriptorPool prefilterDescriptorPool;
+	VkDescriptorSetLayout prefilterDescriptorSetLayout;
+	VkDescriptorSet prefilterDescriptorSet;
+	VkPipelineLayout prefilterPipelineLayout;
+	VkRenderPass prefilterRenderPass;
+	VkFramebuffer prefilterFramebufferPerMip[5];
+	VkPipeline prefilterPipeline;
+	VkFence prefilterMipRenderedFence;
+
+	
+	VkDescriptorSetLayout cubemapDescriptorSetLayout;
+
+	VkDescriptorPool brdfDescPool;
+	VkDescriptorSetLayout brdfDescriptorSetLayout;
+	VkBuffer brdfVertexBuffer;
+	VkDeviceMemory brdfVertexMemory;
+	VkPipelineLayout brdfPipelineLayout;
+	VkPipeline brdfPipeline;
 
 	std::vector<VkBuffer> uniformBuffers, materialBuffers;
 	std::vector<VkDeviceMemory> uniformBuffersMemory, materialBuffersMemory;
@@ -514,7 +547,7 @@ private:
 
 	VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats) {
 		for (const auto& availableFormat : availableFormats) {
-			if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+			if (availableFormat.format == VK_FORMAT_R16G16B16A16_SFLOAT && availableFormat.colorSpace == VK_COLOR_SPACE_HDR10_HLG_EXT) {
 				return availableFormat;
 			}
 		}
@@ -1878,8 +1911,6 @@ private:
 		if (vkCreateImageView(device, &hdriViewInfo, nullptr, &hdriImageView) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create hdri view!");
 		}
-		//vkDestroyBuffer(device, stagingBuffer, nullptr);
-		//vkFreeMemory(device, stagingBufferMemory, nullptr);
 	}
 
 	void createCubemap() {
@@ -2006,90 +2037,6 @@ private:
 		}
 	}
 
-	/*
-	void createPreCubemapResources() {
-
-		VkImageCreateInfo preCubemapImageInfo{};
-		preCubemapImageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-		preCubemapImageInfo.imageType = VK_IMAGE_TYPE_2D;
-		preCubemapImageInfo.extent.width = 1024;
-		preCubemapImageInfo.extent.height = 1024;
-		preCubemapImageInfo.extent.depth = 1;
-		preCubemapImageInfo.mipLevels = 1;
-		preCubemapImageInfo.arrayLayers = 1;
-		preCubemapImageInfo.format = cubemapFormat;
-		preCubemapImageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-		preCubemapImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-		preCubemapImageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-		preCubemapImageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-		preCubemapImageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-
-		for (uint16_t i = 0; i < 6; i++) {
-
-			if (vkCreateImage(device, &preCubemapImageInfo, nullptr, &preCubemapFaceImage[i]) != VK_SUCCESS) {
-				throw std::runtime_error("failed to create cubemap image!");
-			}
-
-			VkMemoryRequirements memRequirements;
-			vkGetImageMemoryRequirements(device, preCubemapFaceImage[i], &memRequirements);
-
-			VkMemoryAllocateInfo allocInfo{};
-			allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-			allocInfo.allocationSize = memRequirements.size;
-			allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-			if (vkAllocateMemory(device, &allocInfo, nullptr, &preCubemapFaceImageMemory[i]) != VK_SUCCESS) {
-				throw std::runtime_error("failed to allocate cubemap memory!");
-
-			}
-			vkBindImageMemory(device, preCubemapFaceImage[i], preCubemapFaceImageMemory[i], 0);
-		}
-
-		VkSamplerCreateInfo preCubemapSamplerInfo{};
-		preCubemapSamplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-		preCubemapSamplerInfo.magFilter = VK_FILTER_LINEAR;
-		preCubemapSamplerInfo.minFilter = VK_FILTER_LINEAR;
-		preCubemapSamplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-		preCubemapSamplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-		preCubemapSamplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-		preCubemapSamplerInfo.anisotropyEnable = VK_TRUE;
-		preCubemapSamplerInfo.maxAnisotropy = 1.0f;
-		preCubemapSamplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-		preCubemapSamplerInfo.unnormalizedCoordinates = VK_FALSE;
-		preCubemapSamplerInfo.compareEnable = VK_FALSE;
-		preCubemapSamplerInfo.compareOp = VK_COMPARE_OP_NEVER;
-		preCubemapSamplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-		preCubemapSamplerInfo.minLod = 0.0f;
-		preCubemapSamplerInfo.maxLod = 1.0f;
-		preCubemapSamplerInfo.mipLodBias = 0.0f;
-		preCubemapSamplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
-
-		if (vkCreateSampler(device, &preCubemapSamplerInfo, nullptr, &preCubemapFaceSampler) != VK_SUCCESS) {
-			throw std::runtime_error("failed to create preCubemap sampler!");
-		}
-
-		VkImageViewCreateInfo preCubemapViewInfo{};
-		preCubemapViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-		preCubemapViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-		preCubemapViewInfo.format = cubemapFormat;
-		preCubemapViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		preCubemapViewInfo.subresourceRange.baseMipLevel = 0;
-		preCubemapViewInfo.subresourceRange.levelCount = 1;
-		preCubemapViewInfo.subresourceRange.baseArrayLayer = 0;
-		preCubemapViewInfo.subresourceRange.layerCount = 1;
-		preCubemapViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-
-		for (uint32_t i = 0; i < 6; i++) {
-			preCubemapViewInfo.image = preCubemapFaceImage[i];
-			if (vkCreateImageView(device, &preCubemapViewInfo, nullptr, &preCubemapFaceImageView[i]) != VK_SUCCESS) {
-				throw std::runtime_error("failed to create preCubemap face view #" + i);
-			}
-
-			transitionImageLayout(preCubemapFaceImage[i], cubemapFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1);
-		}
-	}
-	*/
-
 	void performOffscreenCubemapRender() {
 		//create uniform buffers
 		//																																				dont forget to HANDLE DELETION LATER
@@ -2107,7 +2054,6 @@ private:
 
 		//setup descriptors
 		//pool
-		VkDescriptorPool offscreenDescriptorPool;
 		std::array<VkDescriptorPoolSize, 2> poolSizes{};
 		poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 		poolSizes[0].descriptorCount = 1;
@@ -2120,12 +2066,11 @@ private:
 		poolInfo.pPoolSizes = poolSizes.data();
 		poolInfo.maxSets = 1;
 
-		if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &offscreenDescriptorPool) != VK_SUCCESS) {
+		if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &cubemapCreateDescriptorPool) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create offscreen descriptor pool!");
 		}
 
 		//layout
-		VkDescriptorSetLayout offscreenDescriptorSetLayout;
 		VkDescriptorSetLayoutBinding uboLayoutBinding{};
 		uboLayoutBinding.binding = 0;
 		uboLayoutBinding.descriptorCount = 1;
@@ -2150,19 +2095,18 @@ private:
 		layoutInfo.bindingCount = 2;
 		layoutInfo.pBindings = bindings.data();
 
-		if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &offscreenDescriptorSetLayout) != VK_SUCCESS) {
+		if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &cubemapCreateDescriptorSetLayout) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create offscreen descriptor set layout!");
 		}
 
 		//sets
-		VkDescriptorSet offscreenDescriptorSet;
 		VkDescriptorSetAllocateInfo allocInfo{};
 		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-		allocInfo.descriptorPool = offscreenDescriptorPool;
+		allocInfo.descriptorPool = cubemapCreateDescriptorPool;
 		allocInfo.descriptorSetCount = 1;
-		allocInfo.pSetLayouts = &offscreenDescriptorSetLayout;
+		allocInfo.pSetLayouts = &cubemapCreateDescriptorSetLayout;
 
-		if (vkAllocateDescriptorSets(device, &allocInfo, &offscreenDescriptorSet) != VK_SUCCESS) {
+		if (vkAllocateDescriptorSets(device, &allocInfo, &cubemapCreateDescriptorSet) != VK_SUCCESS) {
 			throw std::runtime_error("failed to allocate offscreen descriptor set!");
 		}
 
@@ -2179,7 +2123,7 @@ private:
 		std::array<VkWriteDescriptorSet, 2> descWrites{};
 
 		descWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		descWrites[0].dstSet = offscreenDescriptorSet;
+		descWrites[0].dstSet = cubemapCreateDescriptorSet;
 		descWrites[0].dstBinding = 0;
 		descWrites[0].dstArrayElement = 0;
 		descWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -2187,7 +2131,7 @@ private:
 		descWrites[0].pBufferInfo = &cubemapBufferInfo;
 
 		descWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		descWrites[1].dstSet = offscreenDescriptorSet;
+		descWrites[1].dstSet = cubemapCreateDescriptorSet;
 		descWrites[1].dstBinding = 1;
 		descWrites[1].dstArrayElement = 0;
 		descWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -2327,9 +2271,9 @@ private:
 		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
 		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 		pipelineLayoutInfo.setLayoutCount = 1;
-		pipelineLayoutInfo.pSetLayouts = &offscreenDescriptorSetLayout;
+		pipelineLayoutInfo.pSetLayouts = &cubemapCreateDescriptorSetLayout;
 
-		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &offscreenPipelineLayout) != VK_SUCCESS) {
+		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &cubemapCreatePipelineLayout) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create offscreen pipeline layout!");
 		}
 
@@ -2406,9 +2350,7 @@ private:
 
 		renderPassInfo.pNext = &multiViewInfo;
 
-		VkRenderPass cubemapRenderPass;
-
-		if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &cubemapRenderPass) != VK_SUCCESS) {
+		if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &cubemapCreateRenderPass) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create cubemap render pass!");
 		}
 
@@ -2418,16 +2360,14 @@ private:
 
 		VkFramebufferCreateInfo framebufferInfo{};
 		framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-		framebufferInfo.renderPass = cubemapRenderPass;
+		framebufferInfo.renderPass = cubemapCreateRenderPass;
 		framebufferInfo.attachmentCount = 2;
 		framebufferInfo.pAttachments = framebufferAttachments.data();
 		framebufferInfo.width = 1024;
 		framebufferInfo.height = 1024;
 		framebufferInfo.layers = 1;
 
-		VkFramebuffer cubemapFramebuffer;
-
-		if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &cubemapFramebuffer) != VK_SUCCESS) {
+		if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &cubemapCreateFramebuffer) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create cubemap framebuffer!");
 		}
 
@@ -2443,16 +2383,14 @@ private:
 		pipelineInfo.pDepthStencilState = &depthStencil;
 		pipelineInfo.pColorBlendState = &colorBlending;
 		pipelineInfo.pDynamicState = &dynamicState;
-		pipelineInfo.layout = offscreenPipelineLayout;
-		pipelineInfo.renderPass = cubemapRenderPass;
+		pipelineInfo.layout = cubemapCreatePipelineLayout;
+		pipelineInfo.renderPass = cubemapCreateRenderPass;
 		pipelineInfo.pNext = NULL;
 		pipelineInfo.subpass = 0;
 		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
 		pipelineInfo.basePipelineIndex = -1;
 
-		VkPipeline offscreenPipeline;
-
-		if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &offscreenPipeline) != VK_SUCCESS) {
+		if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &cubemapCreatePipeline) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create offscreen graphics pipeline!");
 		}
 
@@ -2460,7 +2398,6 @@ private:
 		vkDestroyShaderModule(device, fragShaderModule, nullptr);
 
 		//make command buffers
-		VkCommandBuffer offscreenCommandBuffer;
 
 		VkCommandBufferAllocateInfo commandBufferAllocInfo{};
 		commandBufferAllocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -2468,11 +2405,11 @@ private:
 		commandBufferAllocInfo.commandBufferCount = 1;
 		commandBufferAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 
-		if (vkAllocateCommandBuffers(device, &commandBufferAllocInfo, &offscreenCommandBuffer) != VK_SUCCESS) {
+		if (vkAllocateCommandBuffers(device, &commandBufferAllocInfo, &cubemapCreateCommandBuffer) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create offscreen command buffers!");
 		}
 
-		vkResetCommandBuffer(offscreenCommandBuffer, 0);
+		vkResetCommandBuffer(cubemapCreateCommandBuffer, 0);
 
 		VkCommandBufferBeginInfo beginInfo{};
 		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -2486,24 +2423,24 @@ private:
 
 		VkRenderPassBeginInfo mvRenderpassbeginInfo{};
 		mvRenderpassbeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-		mvRenderpassbeginInfo.renderPass = cubemapRenderPass;
+		mvRenderpassbeginInfo.renderPass = cubemapCreateRenderPass;
 		mvRenderpassbeginInfo.renderArea.offset = { 0, 0 };
 		mvRenderpassbeginInfo.renderArea.extent = { 1024, 1024 };
 		mvRenderpassbeginInfo.clearValueCount = 2;
 		mvRenderpassbeginInfo.pClearValues = clearValues.data();
-		mvRenderpassbeginInfo.framebuffer = cubemapFramebuffer;
+		mvRenderpassbeginInfo.framebuffer = cubemapCreateFramebuffer;
 
-		if (vkBeginCommandBuffer(offscreenCommandBuffer, &beginInfo) != VK_SUCCESS) {
+		if (vkBeginCommandBuffer(cubemapCreateCommandBuffer, &beginInfo) != VK_SUCCESS) {
 			throw std::runtime_error("failed to begin recording cubemap command buffer!");
 		}
 
-		vkCmdBeginRenderPass(offscreenCommandBuffer, &mvRenderpassbeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+		vkCmdBeginRenderPass(cubemapCreateCommandBuffer, &mvRenderpassbeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-		vkCmdBindPipeline(offscreenCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, offscreenPipeline);
+		vkCmdBindPipeline(cubemapCreateCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, cubemapCreatePipeline);
 
 		VkBuffer vertexBuffers[] = { offscreenVertexBuffer };
 		VkDeviceSize offsets[] = { 0 };
-		vkCmdBindVertexBuffers(offscreenCommandBuffer, 0, 1, vertexBuffers, offsets);
+		vkCmdBindVertexBuffers(cubemapCreateCommandBuffer, 0, 1, vertexBuffers, offsets);
 
 		VkViewport viewport{};
 		viewport.x = 0.0f;
@@ -2512,15 +2449,15 @@ private:
 		viewport.height = static_cast<float>(1024);
 		viewport.minDepth = 0.0f;
 		viewport.maxDepth = 1.0f;
-		vkCmdSetViewport(offscreenCommandBuffer, 0, 1, &viewport);
+		vkCmdSetViewport(cubemapCreateCommandBuffer, 0, 1, &viewport);
 
 		VkRect2D scissor{};
 		scissor.offset = { 0, 0 };
 		scissor.extent.height = 1024;
 		scissor.extent.width = 1024;
-		vkCmdSetScissor(offscreenCommandBuffer, 0, 1, &scissor);
-		vkCmdBindDescriptorSets(offscreenCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, offscreenPipelineLayout, 0, 1, &offscreenDescriptorSet, 0, nullptr);
-		vkCmdDraw(offscreenCommandBuffer, 36, 1, 0, 0);
+		vkCmdSetScissor(cubemapCreateCommandBuffer, 0, 1, &scissor);
+		vkCmdBindDescriptorSets(cubemapCreateCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, cubemapCreatePipelineLayout, 0, 1, &cubemapCreateDescriptorSet, 0, nullptr);
+		vkCmdDraw(cubemapCreateCommandBuffer, 36, 1, 0, 0);
 
 		CubemapBufferObject cbo{};
 		cbo.model = glm::mat4(1.0);
@@ -2561,9 +2498,9 @@ private:
 
 		memcpy(offscreenUniformBufferMapped, &cbo, sizeof(CubemapBufferObject));
 
-		vkCmdEndRenderPass(offscreenCommandBuffer);
+		vkCmdEndRenderPass(cubemapCreateCommandBuffer);
 
-		if (vkEndCommandBuffer(offscreenCommandBuffer) != VK_SUCCESS) {
+		if (vkEndCommandBuffer(cubemapCreateCommandBuffer) != VK_SUCCESS) {
 			throw std::runtime_error("failed to record cubemap command buffer for rendering~!");
 		}
 
@@ -2572,26 +2509,13 @@ private:
 		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 		submitInfo.waitSemaphoreCount = 0;
 		submitInfo.commandBufferCount = 1;
-		submitInfo.pCommandBuffers = &offscreenCommandBuffer;
+		submitInfo.pCommandBuffers = &cubemapCreateCommandBuffer;
 		submitInfo.signalSemaphoreCount = 0;
 
 		VkResult dubious = vkQueueSubmit(graphicsQueue, 1, &submitInfo, nullptr);
 		if (dubious != VK_SUCCESS) {
 			throw std::runtime_error("failed to submit draw cubemap command buffer for rendering~!\n");
 		}
-
-		/*
-		vkDestroySampler(device, hdriSampler, nullptr);
-		vkDestroyImageView(device, hdriImageView, nullptr);
-		vkDestroyImage(device, hdriImage, nullptr);
-		vkFreeMemory(device, hdriImageMemory, nullptr);
-		vkDestroyFence(device, offscreenFaceRenderedFence_1, nullptr);
-		vkDestroyFence(device, offscreenFaceRenderedFence_0, nullptr);
-		vkDestroyPipeline(device, offscreenPipeline, nullptr);
-		vkDestroyPipelineLayout(device, offscreenPipelineLayout, nullptr);
-		vkDestroyDescriptorSetLayout(device, offscreenDescriptorSetLayout, nullptr);
-		vkDestroyDescriptorPool(device, offscreenDescriptorPool, nullptr);
-		*/
 	}
 
 	void handleCubemapTransitions() {
@@ -2734,482 +2658,6 @@ private:
 		endSingleTimeCommands(commandBuffer);
 	}
 
-	/*
-	VkPipeline createOffscreenCubemapPipeline(VkDescriptorSetLayout offscreenDescriptorSetLayout) {
-		VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
-		inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-		inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-		inputAssembly.primitiveRestartEnable = VK_FALSE;
-
-		VkPipelineViewportStateCreateInfo viewportState{};
-		viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-		viewportState.viewportCount = 1;
-		viewportState.scissorCount = 1;
-
-		VkPipelineRasterizationStateCreateInfo rasterizer{};
-		rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-		rasterizer.depthClampEnable = VK_FALSE;
-		rasterizer.rasterizerDiscardEnable = VK_FALSE;
-		rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-		rasterizer.lineWidth = 1.0f;
-		rasterizer.cullMode = VK_CULL_MODE_NONE;
-		rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-		rasterizer.depthBiasEnable = VK_FALSE;
-
-		VkPipelineMultisampleStateCreateInfo multisampling{};
-		multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-		multisampling.sampleShadingEnable = VK_FALSE;
-		multisampling.alphaToCoverageEnable = VK_FALSE;
-		multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-		VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-		colorBlendAttachment.colorWriteMask =
-			VK_COLOR_COMPONENT_R_BIT |
-			VK_COLOR_COMPONENT_G_BIT |
-			VK_COLOR_COMPONENT_B_BIT |
-			VK_COLOR_COMPONENT_A_BIT;
-		colorBlendAttachment.blendEnable = VK_FALSE;
-
-		VkPipelineColorBlendStateCreateInfo colorBlending{};
-		colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-		colorBlending.logicOpEnable = VK_FALSE;
-		colorBlending.attachmentCount = 1;
-		colorBlending.pAttachments = &colorBlendAttachment;
-
-		VkPipelineDepthStencilStateCreateInfo depthStencil{};
-		depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-		depthStencil.depthTestEnable = VK_FALSE;
-		depthStencil.depthWriteEnable = VK_FALSE;
-		depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
-		depthStencil.depthBoundsTestEnable = VK_FALSE;
-		depthStencil.stencilTestEnable = VK_FALSE;
-
-		std::vector<VkDynamicState> dynamicStates = {
-			VK_DYNAMIC_STATE_VIEWPORT,
-			VK_DYNAMIC_STATE_SCISSOR
-		};
-
-		auto vertShaderCode = readFile("shader/cube.vert.spv");
-		auto fragShaderCode = readFile("shader/cube.frag.spv");
-
-		VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
-		VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
-
-		VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
-		vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-		vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
-		vertShaderStageInfo.module = vertShaderModule;
-		vertShaderStageInfo.pName = "main";
-
-		VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
-		fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-		fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-		fragShaderStageInfo.module = fragShaderModule;
-		fragShaderStageInfo.pName = "main";
-
-		VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
-
-		VkDeviceSize bufferSize = sizeof(offscreenVertices[0]) * offscreenVertices.size();
-
-		VkBuffer stagingBuffer;
-		VkDeviceMemory stagingBufferMemory;
-		createBuffer(
-			bufferSize,
-			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-			stagingBuffer,
-			stagingBufferMemory
-		);
-
-		void* data;
-		vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-		memcpy(data, offscreenVertices.data(), (size_t)bufferSize);
-		vkUnmapMemory(device, stagingBufferMemory);
-
-		createBuffer(
-			bufferSize,
-			VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-			offscreenVertexBuffer,
-			offscreenVertexBufferMemory
-		);
-
-		copyBuffer(stagingBuffer, offscreenVertexBuffer, bufferSize);
-		vkDestroyBuffer(device, stagingBuffer, nullptr);
-		vkFreeMemory(device, stagingBufferMemory, nullptr);
-
-		VkVertexInputBindingDescription bindingDescription{};
-		bindingDescription.binding = 0;
-		bindingDescription.stride = sizeof(float) * 3;
-		bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-
-		VkVertexInputAttributeDescription attributeDescription{};
-
-		attributeDescription.binding = 0;
-		attributeDescription.location = 0;
-		attributeDescription.format = VK_FORMAT_R32G32B32_SFLOAT;
-		attributeDescription.offset = 0;
-
-		VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
-		vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-		vertexInputInfo.vertexBindingDescriptionCount = 1;
-		vertexInputInfo.vertexAttributeDescriptionCount = 1;
-		vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
-		vertexInputInfo.pVertexAttributeDescriptions = &attributeDescription;
-
-		VkPipelineDynamicStateCreateInfo dynamicState{};
-		dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-		dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
-		dynamicState.pDynamicStates = dynamicStates.data();
-
-		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
-		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-		pipelineLayoutInfo.setLayoutCount = 1;
-		pipelineLayoutInfo.pSetLayouts = &offscreenDescriptorSetLayout;
-
-		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &offscreenPipelineLayout) != VK_SUCCESS) {
-			throw std::runtime_error("failed to create offscreen pipeline layout!");
-		}
-
-		VkRenderPassMultiviewCreateInfo multiviewInfo{};
-		multiviewInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_MULTIVIEW_CREATE_INFO_KHR;
-
-		VkPipelineRenderingCreateInfoKHR pipelineRenderingCreateInfo = {
-			.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR,
-			//.pNext = &multiviewInfo,
-			.colorAttachmentCount = 1,
-			.pColorAttachmentFormats = &cubemapFormat,
-			.depthAttachmentFormat = findDepthFormat()
-		};
-
-		VkGraphicsPipelineCreateInfo pipelineInfo{};
-		pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-		pipelineInfo.stageCount = 2;
-		pipelineInfo.pStages = shaderStages;
-		pipelineInfo.pVertexInputState = &vertexInputInfo;
-		pipelineInfo.pInputAssemblyState = &inputAssembly;
-		pipelineInfo.pViewportState = &viewportState;
-		pipelineInfo.pRasterizationState = &rasterizer;
-		pipelineInfo.pMultisampleState = &multisampling;
-		pipelineInfo.pDepthStencilState = &depthStencil;
-		pipelineInfo.pColorBlendState = &colorBlending;
-		pipelineInfo.pDynamicState = &dynamicState;
-		pipelineInfo.layout = offscreenPipelineLayout;
-		pipelineInfo.renderPass = NULL;
-		pipelineInfo.pNext = &pipelineRenderingCreateInfo;
-		pipelineInfo.subpass = 0;
-		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
-		pipelineInfo.basePipelineIndex = -1;
-
-		VkPipeline offscreenPipeline;
-
-		if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &offscreenPipeline) != VK_SUCCESS) {
-			throw std::runtime_error("failed to create offscreen graphics pipeline!");
-		}
-
-		vkDestroyShaderModule(device, vertShaderModule, nullptr);
-		vkDestroyShaderModule(device, fragShaderModule, nullptr);
-
-		return offscreenPipeline;
-	}
-	*/
-
-	/*
-	void generateCubemapMipmaps() {
-		VkFormatProperties formatproperties;
-		vkGetPhysicalDeviceFormatProperties(physicalDevice, cubemapFormat, &formatproperties);
-
-		if (!(formatproperties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)) {
-			throw std::runtime_error("texture image format does not support linear blitting!");
-		}
-
-		VkCommandBuffer commandBuffer = beginSingleTimeCommands();
-
-		VkImageMemoryBarrier barrier{};
-		barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-		barrier.image = cubemap;
-		barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-		barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-		barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		barrier.subresourceRange.baseArrayLayer = 0;
-		barrier.subresourceRange.layerCount = 6;
-		barrier.subresourceRange.levelCount = 1;
-
-		int32_t mipWidth = 1024;
-		int32_t mipHeight = 1024;
-
-		for (uint32_t i = 1; i < 6; i++) {
-			barrier.subresourceRange.baseMipLevel = i - 1;
-			barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-			barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-			barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-			barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-
-			vkCmdPipelineBarrier(
-				commandBuffer,
-				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
-				0, nullptr,
-				0, nullptr,
-				1, &barrier
-			);
-
-			VkImageBlit blit{};
-			blit.srcOffsets[0] = { 0, 0, 0 };
-			blit.srcOffsets[1] = { mipWidth, mipHeight, 1 };
-			blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-			blit.srcSubresource.mipLevel = i - 1;
-			blit.srcSubresource.baseArrayLayer = 0;
-			blit.srcSubresource.layerCount = 6;
-			blit.dstOffsets[0] = { 0, 0, 0 };
-			blit.dstOffsets[1] = { mipWidth > 1 ? mipWidth / 2 : 1, mipHeight > 1 ? mipHeight / 2 : 1, 1 };
-			blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-			blit.dstSubresource.mipLevel = i;
-			blit.dstSubresource.baseArrayLayer = 0;
-			blit.dstSubresource.layerCount = 6;
-
-			vkCmdBlitImage(
-				commandBuffer,
-				cubemap, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-				cubemap, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-				1, &blit,
-				VK_FILTER_LINEAR
-			);
-
-			barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-			barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-			barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-			barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-			vkCmdPipelineBarrier(
-				commandBuffer,
-				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
-				0, nullptr,
-				0, nullptr,
-				1, &barrier
-			);
-
-			if (mipWidth > 1) mipWidth /= 2;
-			if (mipHeight > 1) mipHeight /= 2;
-		}
-
-		barrier.subresourceRange.baseMipLevel = 5;
-		barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-		barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-		barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-		vkCmdPipelineBarrier(
-			commandBuffer,
-			VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
-			0, nullptr,
-			0, nullptr,
-			1, &barrier
-		);
-
-		endSingleTimeCommands(commandBuffer);
-	}
-	*/
-
-	/*
-	void createPreDiffuseCubemapResources() {
-		VkImageCreateInfo preDiffuseCubemapImageInfo{};
-		preDiffuseCubemapImageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-		preDiffuseCubemapImageInfo.imageType = VK_IMAGE_TYPE_2D;
-		preDiffuseCubemapImageInfo.extent.width = 32;
-		preDiffuseCubemapImageInfo.extent.height = 32;
-		preDiffuseCubemapImageInfo.extent.depth = 1;
-		preDiffuseCubemapImageInfo.mipLevels = 1;
-		preDiffuseCubemapImageInfo.arrayLayers = 1;
-		preDiffuseCubemapImageInfo.format = cubemapFormat;
-		preDiffuseCubemapImageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-		preDiffuseCubemapImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-		preDiffuseCubemapImageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-		preDiffuseCubemapImageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-		preDiffuseCubemapImageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-
-		for (uint16_t i = 0; i < 6; i++) {
-
-			if (vkCreateImage(device, &preDiffuseCubemapImageInfo, nullptr, &preDiffuseCubemapFaceImage[i]) != VK_SUCCESS) {
-				throw std::runtime_error("failed to create pre diffuse cubemap image!");
-			}
-
-			VkMemoryRequirements memRequirements;
-			vkGetImageMemoryRequirements(device, preDiffuseCubemapFaceImage[i], &memRequirements);
-
-			VkMemoryAllocateInfo allocInfo{};
-			allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-			allocInfo.allocationSize = memRequirements.size;
-			allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-			if (vkAllocateMemory(device, &allocInfo, nullptr, &preDiffuseCubemapFaceImageMemory[i]) != VK_SUCCESS) {
-				throw std::runtime_error("failed to allocate pre diffuse cubemap memory!");
-
-			}
-			vkBindImageMemory(device, preDiffuseCubemapFaceImage[i], preDiffuseCubemapFaceImageMemory[i], 0);
-		}
-
-		VkSamplerCreateInfo preDiffuseCubemapSamplerInfo{};
-		preDiffuseCubemapSamplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-		preDiffuseCubemapSamplerInfo.magFilter = VK_FILTER_LINEAR;
-		preDiffuseCubemapSamplerInfo.minFilter = VK_FILTER_LINEAR;
-		preDiffuseCubemapSamplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-		preDiffuseCubemapSamplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-		preDiffuseCubemapSamplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-		preDiffuseCubemapSamplerInfo.anisotropyEnable = VK_TRUE;
-		preDiffuseCubemapSamplerInfo.maxAnisotropy = 1.0f;
-		preDiffuseCubemapSamplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-		preDiffuseCubemapSamplerInfo.unnormalizedCoordinates = VK_FALSE;
-		preDiffuseCubemapSamplerInfo.compareEnable = VK_FALSE;
-		preDiffuseCubemapSamplerInfo.compareOp = VK_COMPARE_OP_NEVER;
-		preDiffuseCubemapSamplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-		preDiffuseCubemapSamplerInfo.minLod = 0.0f;
-		preDiffuseCubemapSamplerInfo.maxLod = 1.0f;
-		preDiffuseCubemapSamplerInfo.mipLodBias = 0.0f;
-		preDiffuseCubemapSamplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
-
-		if (vkCreateSampler(device, &preDiffuseCubemapSamplerInfo, nullptr, &preDiffuseCubemapFaceSampler) != VK_SUCCESS) {
-			throw std::runtime_error("failed to create preDiffuseCubemap sampler!");
-		}
-
-		VkImageViewCreateInfo preDiffuseCubemapViewInfo{};
-		preDiffuseCubemapViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-		preDiffuseCubemapViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-		preDiffuseCubemapViewInfo.format = cubemapFormat;
-		preDiffuseCubemapViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		preDiffuseCubemapViewInfo.subresourceRange.baseMipLevel = 0;
-		preDiffuseCubemapViewInfo.subresourceRange.levelCount = 1;
-		preDiffuseCubemapViewInfo.subresourceRange.baseArrayLayer = 0;
-		preDiffuseCubemapViewInfo.subresourceRange.layerCount = 1;
-		preDiffuseCubemapViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-
-		for (uint32_t i = 0; i < 6; i++) {
-			preDiffuseCubemapViewInfo.image = preDiffuseCubemapFaceImage[i];
-			if (vkCreateImageView(device, &preDiffuseCubemapViewInfo, nullptr, &preDiffuseCubemapFaceImageView[i]) != VK_SUCCESS) {
-				throw std::runtime_error("failed to create preDiffuseCubemap face view #" + i);
-			}
-
-			transitionImageLayout(preDiffuseCubemapFaceImage[i], swapChainImageFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1);
-		}
-
-		VkFormat depthFormat = findDepthFormat();
-		createImage(
-			32,
-			32,
-			1,
-			VK_SAMPLE_COUNT_1_BIT,
-			depthFormat,
-			VK_IMAGE_TILING_OPTIMAL,
-			VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-			diffuseDepthImage,
-			diffuseDepthImageMemory
-		);
-		diffuseDepthImageView = createImageView(diffuseDepthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1);
-		transitionImageLayout(diffuseDepthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 1);
-	}
-	*/
-
-	/*
-	void recordOffscreenDiffuseCommandBuffersAndSubmit(uint32_t face, glm::mat4 viewMatrix, VkCommandBuffer offscreenDiffuseCommandBuffer, void* offscreenDiffuseUniformBufferMapped, VkPipeline diffusePipeline, VkDescriptorSet diffuseDescriptorSet, VkFence fence) {
-		vkResetFences(device, 1, &fence);
-
-		VkCommandBufferBeginInfo beginInfo{};
-		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-
-		//vkQueueWaitIdle(graphicsQueue);
-
-		std::array<VkClearValue, 2>clearValues{};
-		clearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
-		clearValues[1].depthStencil = { 1.0f, 0 };
-
-		VkRenderingAttachmentInfoKHR colorAttachment = {
-			.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-			.imageView = preDiffuseCubemapFaceImageView[face],
-			.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-			.clearValue = clearValues[0]
-		};
-
-		VkRenderingAttachmentInfoKHR depthAttachment = {
-			.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-			.imageView = diffuseDepthImageView,
-			.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-			.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-			.clearValue = clearValues[1]
-		};
-
-		VkRenderingInfoKHR renderingInfo = {
-			.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR,
-			.renderArea = {0, 0, 32, 32},
-			.layerCount = 1,
-			.colorAttachmentCount = 1,
-			.pColorAttachments = &colorAttachment,
-			.pDepthAttachment = &depthAttachment,
-		};
-
-		if (vkBeginCommandBuffer(offscreenDiffuseCommandBuffer, &beginInfo) != VK_SUCCESS) {
-			throw std::runtime_error("failed to begin recording diffuse command buffer!");
-		}
-
-		vkCmdBeginRendering(offscreenDiffuseCommandBuffer, &renderingInfo);
-
-		vkCmdBindPipeline(offscreenDiffuseCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, diffusePipeline);
-
-		VkBuffer vertexBuffers[] = { offscreenVertexBuffer };
-		VkDeviceSize offsets[] = { 0 };
-		vkCmdBindVertexBuffers(offscreenDiffuseCommandBuffer, 0, 1, vertexBuffers, offsets);
-
-		VkViewport viewport{};
-		viewport.x = 0.0f;
-		viewport.y = 0.0f;
-		viewport.width = static_cast<float>(32);
-		viewport.height = static_cast<float>(32);
-		viewport.minDepth = 0.0f;
-		viewport.maxDepth = 1.0f;
-		vkCmdSetViewport(offscreenDiffuseCommandBuffer, 0, 1, &viewport);
-
-		VkRect2D scissor{};
-		scissor.offset = { 0, 0 };
-		scissor.extent.height = 32;
-		scissor.extent.width = 32;
-		vkCmdSetScissor(offscreenDiffuseCommandBuffer, 0, 1, &scissor);
-		vkCmdBindDescriptorSets(offscreenDiffuseCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, diffuseCubemapPipelineLayout, 0, 1, &diffuseDescriptorSet, 0, nullptr);
-		vkCmdDraw(offscreenDiffuseCommandBuffer, 36, 1, 0, 0);
-
-		UniformBufferObject ubo{};
-		ubo.model = glm::mat4(1.0);
-		ubo.proj = glm::perspective((float)(3.1417 / 2.0), 1.0f, 0.1f, 10.0f);
-		ubo.view = viewMatrix;
-		ubo.camPos = glm::vec3(1.0f);
-		memcpy(offscreenUniformBufferMapped, &ubo, sizeof(UniformBufferObject));
-
-		vkCmdEndRendering(offscreenDiffuseCommandBuffer);
-
-		if (vkEndCommandBuffer(offscreenDiffuseCommandBuffer) != VK_SUCCESS) {
-			throw std::runtime_error("failed to record diffuse command buffer for rendering~!");
-		}
-
-		//queue submit info
-		VkSubmitInfo submitInfo{};
-		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-		submitInfo.waitSemaphoreCount = 0;
-		submitInfo.commandBufferCount = 1;
-		submitInfo.pCommandBuffers = &offscreenDiffuseCommandBuffer;
-		submitInfo.signalSemaphoreCount = 0;
-
-		VkResult dubious = vkQueueSubmit(graphicsQueue, 1, &submitInfo, fence);
-		if (dubious != VK_SUCCESS) {
-			std::cout << face << " diffuse number error:";
-			throw std::runtime_error("failed to submit draw offscreen command buffer for rendering~!\n");
-		}
-
-		vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
-	}
-	*/
-
 	void createDiffuseMap() {
 		VkImageCreateInfo diffuseCubemapInfo{};
 		diffuseCubemapInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -3285,9 +2733,9 @@ private:
 	}
 
 	void performOffscreenDiffuseMapRender() {
+
 		//setup descriptors
 		//pool
-		VkDescriptorPool offscreenDescriptorPool;
 		std::array<VkDescriptorPoolSize, 2> poolSizes{};
 		poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 		poolSizes[0].descriptorCount = 1;
@@ -3300,12 +2748,11 @@ private:
 		poolInfo.pPoolSizes = poolSizes.data();
 		poolInfo.maxSets = 1;
 
-		if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &offscreenDescriptorPool) != VK_SUCCESS) {
+		if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &diffuseDescriptorPool) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create offscreen diffuse descriptor pool!");
 		}
 
 		//layout
-		VkDescriptorSetLayout offscreenDescriptorSetLayout;
 		VkDescriptorSetLayoutBinding uboLayoutBinding{};
 		uboLayoutBinding.binding = 0;
 		uboLayoutBinding.descriptorCount = 1;
@@ -3330,19 +2777,18 @@ private:
 		layoutInfo.bindingCount = 2;
 		layoutInfo.pBindings = bindings.data();
 
-		if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &offscreenDescriptorSetLayout) != VK_SUCCESS) {
+		if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &diffuseDescriptorSetLayout) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create offscreen diffuse descriptor set layout!");
 		}
 
 		//sets
-		VkDescriptorSet offscreenDescriptorSet;
 		VkDescriptorSetAllocateInfo allocInfo{};
 		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-		allocInfo.descriptorPool = offscreenDescriptorPool;
+		allocInfo.descriptorPool = diffuseDescriptorPool;
 		allocInfo.descriptorSetCount = 1;
-		allocInfo.pSetLayouts = &offscreenDescriptorSetLayout;
+		allocInfo.pSetLayouts = &diffuseDescriptorSetLayout;
 
-		if (vkAllocateDescriptorSets(device, &allocInfo, &offscreenDescriptorSet) != VK_SUCCESS) {
+		if (vkAllocateDescriptorSets(device, &allocInfo, &diffuseDescriptorSet) != VK_SUCCESS) {
 			throw std::runtime_error("failed to allocate offscreen diffuse descriptor set!");
 		}
 
@@ -3359,7 +2805,7 @@ private:
 		std::array<VkWriteDescriptorSet, 2> descWrites{};
 
 		descWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		descWrites[0].dstSet = offscreenDescriptorSet;
+		descWrites[0].dstSet = diffuseDescriptorSet;
 		descWrites[0].dstBinding = 0;
 		descWrites[0].dstArrayElement = 0;
 		descWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -3367,7 +2813,7 @@ private:
 		descWrites[0].pBufferInfo = &cubemapBufferInfo;
 
 		descWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		descWrites[1].dstSet = offscreenDescriptorSet;
+		descWrites[1].dstSet = diffuseDescriptorSet;
 		descWrites[1].dstBinding = 1;
 		descWrites[1].dstArrayElement = 0;
 		descWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -3478,7 +2924,7 @@ private:
 		VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
 		pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 		pipelineLayoutInfo.setLayoutCount = 1;
-		pipelineLayoutInfo.pSetLayouts = &offscreenDescriptorSetLayout;
+		pipelineLayoutInfo.pSetLayouts = &diffuseDescriptorSetLayout;
 
 		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &diffuseCubemapPipelineLayout) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create offscreen diffuse pipeline layout!");
@@ -3552,8 +2998,6 @@ private:
 
 		renderPassInfo.pNext = &multiViewInfo;
 
-		VkRenderPass diffuseRenderPass;
-
 		if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &diffuseRenderPass) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create cubemap render pass!");
 		}
@@ -3570,8 +3014,6 @@ private:
 		framebufferInfo.width = 32;
 		framebufferInfo.height = 32;
 		framebufferInfo.layers = 1;
-
-		VkFramebuffer diffuseFramebuffer;
 
 		if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &diffuseFramebuffer) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create diffuse cubemap framebuffer!");
@@ -3595,8 +3037,6 @@ private:
 		pipelineInfo.subpass = 0;
 		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
 		pipelineInfo.basePipelineIndex = -1;
-
-		VkPipeline diffuseCubemapPipeline;
 
 		if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &diffuseCubemapPipeline) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create offscreen diffuse graphics pipeline!");
@@ -3666,7 +3106,7 @@ private:
 		scissor.extent.height = 32;
 		scissor.extent.width = 32;
 		vkCmdSetScissor(offscreenCommandBuffer, 0, 1, &scissor);
-		vkCmdBindDescriptorSets(offscreenCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, diffuseCubemapPipelineLayout, 0, 1, &offscreenDescriptorSet, 0, nullptr);
+		vkCmdBindDescriptorSets(offscreenCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, diffuseCubemapPipelineLayout, 0, 1, &diffuseDescriptorSet, 0, nullptr);
 		vkCmdDraw(offscreenCommandBuffer, 36, 1, 0, 0);
 
 		CubemapBufferObject cbo{};
@@ -3812,9 +3252,9 @@ private:
 	}
 
 	void performPrefilterMapRender() {
+
 		//setup descriptors
 		//pool
-		VkDescriptorPool prefilterDescriptorPool;
 		std::array<VkDescriptorPoolSize, 2> poolSizes{};
 		poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 		poolSizes[0].descriptorCount = 1;
@@ -3832,7 +3272,6 @@ private:
 		}
 
 		//layout
-		VkDescriptorSetLayout prefilterDescriptorSetLayout;
 		VkDescriptorSetLayoutBinding uboLayoutBinding{};
 		uboLayoutBinding.binding = 0;
 		uboLayoutBinding.descriptorCount = 1;
@@ -3862,7 +3301,6 @@ private:
 		}
 
 		//sets
-		VkDescriptorSet prefilterDescriptorSet;
 		VkDescriptorSetAllocateInfo allocInfo{};
 		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
 		allocInfo.descriptorPool = prefilterDescriptorPool;
@@ -4014,8 +3452,6 @@ private:
 		pipelineLayoutInfo.pushConstantRangeCount = 1;
 		pipelineLayoutInfo.pPushConstantRanges = &pushConstant;
 
-		VkPipelineLayout prefilterPipelineLayout;
-
 		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &prefilterPipelineLayout) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create offscreen diffuse pipeline layout!");
 		}
@@ -4088,15 +3524,11 @@ private:
 
 		renderPassInfo.pNext = &multiViewInfo;
 
-		VkRenderPass prefilterRenderPass;
-
 		if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &prefilterRenderPass) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create prefilter render pass!");
 		}
 
 		const uint32_t PREFILTER_MAP_BASE_DIMENSION = 128;
-
-		VkFramebuffer prefilterFramebufferPerMip[5];
 
 		for (int i = 0; i < 5; i++) {
 			std::array<VkImageView, 2> framebufferAttachments;
@@ -4135,8 +3567,6 @@ private:
 		pipelineInfo.subpass = 0;
 		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
 		pipelineInfo.basePipelineIndex = -1;
-
-		VkPipeline prefilterPipeline;
 
 		if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &prefilterPipeline) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create offscreen diffuse graphics pipeline!");
@@ -4211,8 +3641,6 @@ private:
 		memcpy(offscreenUniformBufferMapped, &cbo, sizeof(CubemapBufferObject));
 
 		uint32_t workingDimension = PREFILTER_MAP_BASE_DIMENSION;
-
-		VkFence prefilterMipRenderedFence;
 
 		VkFenceCreateInfo fenceInfo{};
 		fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
@@ -4372,6 +3800,7 @@ private:
 	}
 
 	void performBRDFLUTRender() {
+
 		//handle descriptors
 		//start
 		VkDescriptorPoolCreateInfo poolInfo{};
@@ -4379,14 +3808,11 @@ private:
 		poolInfo.poolSizeCount = 0;
 		poolInfo.maxSets = 1;
 
-		VkDescriptorPool brdfDescPool;
-
 		if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &brdfDescPool) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create brdf descriptor pool!");
 		}
 
 		//layout
-		VkDescriptorSetLayout brdfDescriptorSetLayout;
 
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
 		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -4395,23 +3821,6 @@ private:
 		if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &brdfDescriptorSetLayout) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create brdf descriptor set layout!");
 		}
-
-		//sets
-		/*
-		VkDescriptorSetAllocateInfo allocInfo{};
-		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-		allocInfo.descriptorPool = brdfDescPool;
-		allocInfo.descriptorSetCount = 0;
-
-		VkDescriptorSet brdfDescriptorSet;
-
-		if (vkAllocateDescriptorSets(device, &allocInfo, &brdfDescriptorSet) != VK_SUCCESS) {
-			throw std::runtime_error("failed to allocate brdf descriptor set!");
-		}
-		*/
-
-		//vkUpdateDescriptorSets(device, 0, nullptr, 0, nullptr);
-		//end
 
 		//make pipeline
 		VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
@@ -4498,8 +3907,6 @@ private:
 			 1.0f, -1.0f, 0.0f, 1.0f, 0.0f,
 		};
 
-		VkBuffer brdfVertexBuffer; VkDeviceMemory brdfVertexMemory;
-
 		VkDeviceSize brdfBufferSize = sizeof(float) * brdfVertices.size();
 
 		VkBuffer stagingBuffer;
@@ -4563,8 +3970,6 @@ private:
 		pipelineLayoutInfo.setLayoutCount = 0;
 		//pipelineLayoutInfo.pSetLayouts = &brdfDescriptorSetLayout;
 
-		VkPipelineLayout brdfPipelineLayout;
-
 		if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &brdfPipelineLayout) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create brdf pipeline layout!");
 		}
@@ -4594,8 +3999,6 @@ private:
 		pipelineInfo.subpass = 0;
 		pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
 		pipelineInfo.basePipelineIndex = -1;
-
-		VkPipeline brdfPipeline;
 
 		if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &brdfPipeline) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create brdfPipeline!");
@@ -4759,7 +4162,6 @@ private:
 		}
 
 		//layout
-		VkDescriptorSetLayout cubemapDescriptorSetLayout;
 		VkDescriptorSetLayoutBinding uboLayoutBinding{};
 		uboLayoutBinding.binding = 0;
 		uboLayoutBinding.descriptorCount = 1;
@@ -4828,7 +4230,6 @@ private:
 		descWrites[1].pImageInfo = &cubemapImageInfo;
 
 		vkUpdateDescriptorSets(device, static_cast<uint32_t>(descWrites.size()), descWrites.data(), 0, nullptr);
-		//end
 
 		//make pipeline
 		VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
@@ -5707,6 +5108,87 @@ private:
 		vkDestroySwapchainKHR(device, swapChain, nullptr);
 	}
 
+	void cleanupPBR() {
+		
+		vkDestroyPipelineLayout(device, cubemapPipelineLayout, nullptr);
+		vkDestroyPipeline(device, cubemapPipeline, nullptr);
+		vkDestroyDescriptorSetLayout(device, cubemapDescriptorSetLayout, nullptr);
+		vkDestroyDescriptorPool(device, cubemapDescPool, nullptr);
+
+		vkDestroyPipeline(device, brdfPipeline, nullptr);
+		vkDestroyPipelineLayout(device, brdfPipelineLayout, nullptr);
+		vkFreeMemory(device, brdfVertexMemory, nullptr);
+		vkDestroyBuffer(device, brdfVertexBuffer, nullptr);
+		vkDestroyDescriptorSetLayout(device, brdfDescriptorSetLayout, nullptr);
+		vkDestroyDescriptorPool(device, brdfDescPool, nullptr);
+
+		vkDestroySampler(device, brdfLUTSampler, nullptr);
+		vkDestroyImageView(device, brdfLUTImageView, nullptr);
+		vkDestroyImage(device, brdfLUT, nullptr);
+		vkFreeMemory(device, brdfLUTMemory, nullptr);
+
+		vkDestroyPipeline(device, prefilterPipeline, nullptr);
+		vkDestroyFramebuffer(device, prefilterFramebufferPerMip[4], nullptr);
+		vkDestroyFramebuffer(device, prefilterFramebufferPerMip[3], nullptr);
+		vkDestroyFramebuffer(device, prefilterFramebufferPerMip[2], nullptr);
+		vkDestroyFramebuffer(device, prefilterFramebufferPerMip[1], nullptr);
+		vkDestroyFramebuffer(device, prefilterFramebufferPerMip[0], nullptr);
+		vkDestroyRenderPass(device, prefilterRenderPass, nullptr);
+		vkDestroyPipelineLayout(device, prefilterPipelineLayout, nullptr);
+		vkDestroyDescriptorSetLayout(device, prefilterDescriptorSetLayout, nullptr);
+		vkDestroyDescriptorPool(device, prefilterDescriptorPool, nullptr);
+
+		vkDestroySampler(device, prefilterCubemapSampler, nullptr);
+		vkDestroyImageView(device, prefilterCubemapImageView, nullptr);
+		vkDestroyImageView(device, prefilterCubemapImageViewPerMip[0], nullptr);
+		vkDestroyImageView(device, prefilterCubemapImageViewPerMip[1], nullptr);
+		vkDestroyImageView(device, prefilterCubemapImageViewPerMip[2], nullptr);
+		vkDestroyImageView(device, prefilterCubemapImageViewPerMip[3], nullptr);
+		vkDestroyImageView(device, prefilterCubemapImageViewPerMip[4], nullptr);
+		vkDestroyImage(device, prefilterCubemap, nullptr);
+		vkFreeMemory(device, prefilterCubemapMemory, nullptr);
+		vkDestroyFence(device, prefilterMipRenderedFence, nullptr);
+
+		vkDestroyPipeline(device, cubemapCreatePipeline, nullptr);
+		vkDestroyFramebuffer(device, cubemapCreateFramebuffer, nullptr);
+		vkDestroyRenderPass(device, cubemapCreateRenderPass, nullptr);
+		vkDestroyPipelineLayout(device, cubemapCreatePipelineLayout, nullptr);
+		vkDestroyDescriptorSetLayout(device, cubemapCreateDescriptorSetLayout, nullptr);
+		vkDestroyDescriptorPool(device, cubemapCreateDescriptorPool, nullptr);
+
+		vkDestroyBuffer(device, offscreenUniformBuffer, nullptr);
+		vkFreeMemory(device, offscreenUniformBufferMemory, nullptr);
+
+		vkDestroyBuffer(device, offscreenVertexBuffer, nullptr);
+		vkFreeMemory(device, offscreenVertexBufferMemory, nullptr);
+
+		vkDestroySampler(device, cubemapSampler, nullptr);
+		vkDestroyImageView(device, cubemapImageView, nullptr);
+		vkDestroyImage(device, cubemap, nullptr);
+		vkFreeMemory(device, cubemapMemory, nullptr);
+
+		vkDestroyPipeline(device, diffuseCubemapPipeline, nullptr);
+		vkDestroyFramebuffer(device, diffuseFramebuffer, nullptr);
+		vkDestroyRenderPass(device, diffuseRenderPass, nullptr);
+		vkDestroyPipelineLayout(device, diffuseCubemapPipelineLayout, nullptr);
+		vkDestroyDescriptorSetLayout(device, diffuseDescriptorSetLayout, nullptr);
+		vkDestroyDescriptorPool(device, diffuseDescriptorPool, nullptr);
+
+		vkDestroySampler(device, diffuseCubemapSampler, nullptr);
+		vkDestroyImageView(device, diffuseCubemapImageView, nullptr);
+		vkDestroyImage(device, diffuseCubemap, nullptr);
+		vkFreeMemory(device, diffuseCubemapMemory, nullptr);
+
+		vkDestroyImageView(device, offscreenDepthImageView, nullptr);
+		vkDestroyImage(device, offscreenDepthImage, nullptr);
+		vkFreeMemory(device, offscreenDepthImageMemory, nullptr);
+
+		vkDestroySampler(device, hdriSampler, nullptr);
+		vkDestroyImageView(device, hdriImageView, nullptr);
+		vkDestroyImage(device, hdriImage, nullptr);
+		vkFreeMemory(device, hdriImageMemory, nullptr);
+	}
+
 	void cleanup() {
 		cleanupSwapChain();
 
@@ -5734,27 +5216,6 @@ private:
 		vkDestroyImageView(device, baseColorImageView, nullptr);
 		vkDestroyImage(device, baseColorImage, nullptr);
 		vkFreeMemory(device, baseColorMemory, nullptr);
-
-		vkDestroyImageView(device, hdriImageView, nullptr);
-		vkDestroyImage(device, hdriImage, nullptr);
-		vkFreeMemory(device, hdriImageMemory, nullptr);
-
-		/*
-		vkDestroySampler(device, preCubemapFaceSampler, nullptr);
-		vkDestroyImageView(device, diffuseCubemapImageView, nullptr);
-		vkDestroyImage(device, preCubemapFaceImage, nullptr);
-		vkFreeMemory(device, preCubemapFaceImageMemory, nullptr);
-		*/
-
-		/*
-		vkDestroyImageView(device, preCubemapFaceImageView[0], nullptr);
-		vkDestroyImageView(device, preCubemapFaceImageView[1], nullptr);
-		vkDestroyImageView(device, preCubemapFaceImageView[2], nullptr);
-		vkDestroyImageView(device, preCubemapFaceImageView[3], nullptr);
-		vkDestroyImageView(device, preCubemapFaceImageView[4], nullptr);
-		vkDestroyImageView(device, preCubemapFaceImageView[5], nullptr);
-		*/
-		
 
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 			vkDestroyBuffer(device, materialBuffers[i], nullptr);
@@ -5785,6 +5246,8 @@ private:
 		}
 
 		vkDestroyCommandPool(device, commandPool, nullptr);
+
+		cleanupPBR();
 
 		vkDestroyDevice(device, nullptr);
 
