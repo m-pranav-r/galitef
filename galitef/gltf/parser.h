@@ -15,6 +15,7 @@
 #ifndef STB_H
 #define STB_H
 #define STB_IMAGE_IMPLEMENTATION
+#define STBI_FAILURE_USERMSG
 #include <stb_image.h>
 #endif
 
@@ -28,6 +29,29 @@ enum TextureType {
 	OCCLUSION = 4
 };
 
+std::string getMimeType(fastgltf::MimeType mimeType) {
+	switch (mimeType)
+	{
+	case fastgltf::MimeType::None:
+		return std::string("None");
+		break;
+	case fastgltf::MimeType::JPEG:
+		return std::string("JPEG");
+		break;
+	case fastgltf::MimeType::PNG:
+		return std::string("PNG");
+		break;
+	case fastgltf::MimeType::KTX2:
+		return std::string("KTX2");
+		break;
+	case fastgltf::MimeType::DDS:
+		return std::string("DDS");
+		break;
+	default:
+		break;
+	}
+}
+
 class Texture {
 public:
 	TextureType type;
@@ -36,8 +60,12 @@ public:
 	std::array<float, 4> factor = { 0, 0, 0, 0 };
 	uint64_t textureIndex, texCoordIndex;
 
-	void load(fastgltf::Asset& asset, uint64_t textureIndex, TextureType texType, std::array<float, 4> factor, uint64_t texCoordIndex) {
+	bool load(fastgltf::Asset& asset, uint64_t textureIndex, TextureType texType, std::array<float, 4> factor, uint64_t texCoordIndex) {
 		std::cout << "trying to load texture of type " << texType;
+		if (!asset.textures[textureIndex].imageIndex.has_value()) {
+			std::cout << "...not found, marking as such.\n";
+			return false;
+		}
 		fastgltf::Image& image = asset.images[asset.textures[textureIndex].imageIndex.value()];
 		fastgltf::sources::BufferView bufferViewView = std::get<fastgltf::sources::BufferView>(image.data);
 		fastgltf::BufferView& bufferView = asset.bufferViews[bufferViewView.bufferViewIndex];
@@ -48,8 +76,13 @@ public:
 		int requiredChannels = 4;
 		pixels = stbi_load_from_memory((stbi_uc*)byteView.bytes.data() + bufferView.byteOffset, bufferView.byteLength, &texWidth, &texHeight, &texChannels, requiredChannels);
 		if (stbi_failure_reason()) {
-			std::cout << "... error!\n";
-			std::cout << stbi_failure_reason() << std::endl;
+			//stbi__jpeg_load((stbi_uc*)byteView.bytes.data() + bufferView.byteOffset, bufferView.byteLength, &texWidth, &texHeight, &texChannels, requiredChannels);
+			//stbi_memory
+			std::cout << "... error! detected channels: " << texChannels << ", requested channels: " << requiredChannels << "\n"
+				<< "failure reason from stbi: " << stbi_failure_reason() << std::endl
+				<< "extra info:\n\tname:" << image.name << std::endl
+				<< "\tmime type: "<< getMimeType(bufferViewView.mimeType)<<std::endl;
+			//routine to get handle to jpeg data in memory
 			throw std::runtime_error("failed to load image!!");
 		}
 
@@ -57,12 +90,14 @@ public:
 		this->type = texType;
 		this->texCoordIndex = texCoordIndex;
 		std::cout << "... done!\n";
+		return true;
 	}
 };
 
 class Material {
 public:
 	Texture baseColorTex, metalRoughTex, normalTex, emissiveTex, occlusionTex;
+	bool isEmissiveTexPresent = false, isOcclusionTexPresent = false;
 };
 
 class Model {
@@ -255,25 +290,32 @@ public:
 					currMaterial.normalTexture.value().texCoordIndex
 				);
 
-				model.mat.emissiveTex.load(
-					asset,
-					currMaterial.emissiveTexture.value().textureIndex,
-					TextureType::EMISSIVE,
-					std::array<float, 4>{
-					currMaterial.emissiveFactor[0],
-						currMaterial.emissiveFactor[1],
-						currMaterial.emissiveFactor[2],
-						1
-				},
-					currMaterial.emissiveTexture.value().texCoordIndex
-				);
-				model.mat.occlusionTex.load(
-					asset,
-					currMaterial.occlusionTexture.value().textureIndex,
-					TextureType::OCCLUSION,
-					std::array<float, 4>{currMaterial.occlusionTexture.value().strength},
-					currMaterial.occlusionTexture.value().texCoordIndex
-				);
+				if (currMaterial.emissiveTexture.has_value()) {
+					model.mat.isEmissiveTexPresent = model.mat.emissiveTex.load(
+						asset,
+						currMaterial.emissiveTexture.value().textureIndex,
+						TextureType::EMISSIVE,
+						std::array<float, 4>{
+						currMaterial.emissiveFactor[0],
+							currMaterial.emissiveFactor[1],
+							currMaterial.emissiveFactor[2],
+							1
+					},
+						currMaterial.emissiveTexture.value().texCoordIndex
+					);
+
+				}
+
+				if (currMaterial.occlusionTexture.has_value()) {
+					model.mat.isOcclusionTexPresent = model.mat.occlusionTex.load(
+						asset,
+						currMaterial.occlusionTexture.value().textureIndex,
+						TextureType::OCCLUSION,
+						std::array<float, 4>{currMaterial.occlusionTexture.value().strength},
+						currMaterial.occlusionTexture.value().texCoordIndex
+					);
+				}
+
 			}
 		}
 	}

@@ -1,4 +1,6 @@
 #version 450
+#define OCCLUSION
+#define EMISSIVE
 
 //#extension GL_EXT_debug_printf : enable
 
@@ -12,8 +14,12 @@ layout(location = 5) in mat3 TBN;
 layout(binding = 2) uniform sampler2D baseColorTex;
 layout(binding = 3) uniform sampler2D metallicRoughness;
 layout(binding = 4) uniform sampler2D normals;
+#ifdef OCCLUSION
 layout(binding = 5) uniform sampler2D occlusion;
+#endif
+#ifdef EMISSIVE
 layout(binding = 6) uniform sampler2D emissive;
+#endif
 layout(binding = 7) uniform samplerCube cubemap;
 layout(binding = 8) uniform samplerCube irradianceCubemap;
 layout(binding = 9) uniform samplerCube prefilterCubemap;
@@ -84,8 +90,12 @@ void main(){
 	vec4 mrSample = pow(texture(metallicRoughness, texCoord), vec4(1/2.2));
 	float roughness = mat.roughnessFactor * mrSample.g;
 	float metallic = mat.metallicFactor * mrSample.b;
+#ifdef OCCLUSION
 	float ao = texture(occlusion, texCoord).r;
+#endif
+#ifdef EMISSIVE
 	vec3 emissiveColor = pow(texture(emissive, texCoord).rgb, vec3(2.2));
+#endif
 
 	vec3 F0 = mix(vec3(0.04), baseColor, metallic);
 	
@@ -152,11 +162,17 @@ void main(){
 	vec3 prefilteredColor = textureLod(prefilterCubemap, r, roughness * MAX_REFLECTION_LOD).rgb;
 	vec2 brdf = texture(brdfLUT, vec2(max(dot(n, v), 0.0), roughness)).rg;
 	vec3 specular = prefilteredColor * (F * brdf.x + brdf.y);
-
+#ifdef OCCLUSION
 	vec3 ambient = (kD * diffuse + specular) * ao;
-
+#else
+	vec3 ambient = (kD * diffuse + specular);
+#endif
+#ifdef EMISSIVE
 	vec3 color = ambient + Lo + emissiveColor;
-
+#else
+	vec3 color = ambient + Lo;
+#endif
+	
 	/*
 	color = color / (color + vec3(1.0));
 	color = pow(color, vec3(1.0/2.2));

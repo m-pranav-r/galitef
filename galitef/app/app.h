@@ -231,6 +231,7 @@ public:
 			if (key == GLFW_KEY_D) velocity.x = 1;
 			if (key == GLFW_KEY_E) velocity.y = 1;
 			if (key == GLFW_KEY_Q) velocity.y = -1;
+			if (key == GLFW_KEY_ESCAPE) glfwSetWindowShouldClose(window, 1);
 		}
 
 		if (action == GLFW_RELEASE) {
@@ -267,7 +268,8 @@ class GalitefApp {
 public:
 	GalitefApp(uint32_t width, uint32_t height, Model parsedModel) : WIDTH(width), HEIGHT(height), model(parsedModel) {};
 
-	void run() {
+	void run(const char* path) {
+		hdriPath = path;
 		initWindow();
 		initVulkan();
 		mainLoop();
@@ -277,6 +279,8 @@ public:
 private:
 	uint32_t WIDTH, HEIGHT;
 	Model model;
+
+	const char* hdriPath;
 
 	GLFWwindow* window;
 	VkInstance instance;
@@ -546,6 +550,16 @@ private:
 	}
 
 	VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats) {
+		for (const auto& availableFormat : availableFormats) {
+			if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+				return availableFormat;
+			}
+		}
+
+		return availableFormats[0];
+	}
+
+	VkSurfaceFormatKHR chooseSwapSurfaceFormatHDR(const std::vector<VkSurfaceFormatKHR>& availableFormats) {
 		for (const auto& availableFormat : availableFormats) {
 			if (availableFormat.format == VK_FORMAT_R16G16B16A16_SFLOAT && availableFormat.colorSpace == VK_COLOR_SPACE_HDR10_HLG_EXT) {
 				return availableFormat;
@@ -836,19 +850,20 @@ private:
 		brdfLayoutbinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
 
-		std::array<VkDescriptorSetLayoutBinding, 11> bindings = { 
+		std::vector<VkDescriptorSetLayoutBinding> bindings = { 
 			uboLayoutBinding, 
 			materialLayoutBinding,
 			baseColorLayoutBinding,
 			metallicRoughnessLayoutBinding,
 			normalLayoutBinding,
-			occlusionLayoutBinding,
-			emissiveLayoutbinding,
 			cubemapLayoutbinding,
 			diffuseCubemapLayoutbinding,
 			prefilterCubemapLayoutbinding,
 			brdfLayoutbinding
 		};
+
+		if (model.mat.isEmissiveTexPresent) bindings.push_back(occlusionLayoutBinding);
+		if (model.mat.isOcclusionTexPresent) bindings.push_back(emissiveLayoutbinding);
 
 		VkDescriptorSetLayoutCreateInfo layoutInfo{};
 		layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -1309,10 +1324,12 @@ private:
 		std::vector<Texture> textures = {
 			model.mat.baseColorTex,
 			model.mat.normalTex,
-			model.mat.occlusionTex,
-			model.mat.emissiveTex,
 			model.mat.metalRoughTex,
 		};
+
+		if (model.mat.isEmissiveTexPresent) textures.push_back(model.mat.emissiveTex);
+		if (model.mat.isOcclusionTexPresent) textures.push_back(model.mat.occlusionTex);
+
 		for (auto& texture : textures) {
 			mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(texture.texWidth, texture.texHeight)))) + 1;
 
@@ -1717,8 +1734,8 @@ private:
 		baseColorImageView = createImageView(baseColorImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
 		metallicRoughnessImageView = createImageView(metallicRoughnessImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
 		normalImageView = createImageView(normalImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
-		occlusionImageView = createImageView(occlusionImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
-		emissiveImageView = createImageView(emissiveImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
+		if (model.mat.isOcclusionTexPresent) occlusionImageView = createImageView(occlusionImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
+		if (model.mat.isEmissiveTexPresent) emissiveImageView = createImageView(emissiveImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
 
 	}
 
@@ -1726,10 +1743,12 @@ private:
 		std::vector<Texture> textures = {
 			model.mat.baseColorTex,
 			model.mat.normalTex,
-			model.mat.occlusionTex,
-			model.mat.emissiveTex,
-			model.mat.metalRoughTex
+			model.mat.metalRoughTex,
 		};
+
+		if (model.mat.isEmissiveTexPresent) textures.push_back(model.mat.emissiveTex);
+		if (model.mat.isOcclusionTexPresent) textures.push_back(model.mat.occlusionTex);
+
 		for (auto& texture : textures) {
 			VkSampler* textureSampler = nullptr;// &baseColorSampler;
 
@@ -1789,7 +1808,7 @@ private:
 	void createHDRIResources() {
 		stbi_set_flip_vertically_on_load(true);
 		int width, height, noComponents;
-		float* pixels = stbi_loadf("hdri/newport_loft.hdr", &width, &height, &noComponents, 3);
+		float* pixels = stbi_loadf(hdriPath, &width, &height, &noComponents, 3);
 		if (!pixels) {
 			throw std::runtime_error("failed to load hdri!");
 		}
@@ -4529,30 +4548,29 @@ private:
 	}
 
 	void createDescriptorPool() {
-		std::array<VkDescriptorPoolSize, 11> poolSizes{};
-		poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-		poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
-		poolSizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-		poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
-		poolSizes[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		poolSizes[2].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
-		poolSizes[3].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		poolSizes[3].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
-		poolSizes[4].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		poolSizes[4].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
-		poolSizes[5].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		poolSizes[5].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
-		poolSizes[6].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		poolSizes[6].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
-		poolSizes[7].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		poolSizes[7].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
-		poolSizes[8].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		poolSizes[8].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
-		poolSizes[9].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		poolSizes[9].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
-		poolSizes[10].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		poolSizes[10].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+		std::vector<VkDescriptorPoolSize> poolSizes{};
 
+		uint16_t noUniforms = 2;
+
+		for (uint16_t i = 0; i < noUniforms; i++) {
+			VkDescriptorPoolSize poolSize = {
+				.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+				.descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT)
+			};
+			poolSizes.push_back(poolSize);
+		}
+
+		uint16_t noTextures = 7;
+		if (model.mat.isEmissiveTexPresent) noTextures++;
+		if (model.mat.isOcclusionTexPresent) noTextures++;
+
+		for (uint16_t i = 0; i < noTextures; i++) {
+			VkDescriptorPoolSize poolSize = {
+				.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT)
+			};
+			poolSizes.push_back(poolSize);
+		}
 
 		VkDescriptorPoolCreateInfo poolInfo{};
 		poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -4679,53 +4697,57 @@ private:
 
 			descWrites[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 			descWrites[5].dstSet = descriptorSets[i];
-			descWrites[5].dstBinding = 5;
+			descWrites[5].dstBinding = 7;
 			descWrites[5].dstArrayElement = 0;
 			descWrites[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 			descWrites[5].descriptorCount = 1;
-			descWrites[5].pImageInfo = &occlusionImageInfo;
+			descWrites[5].pImageInfo = &cubemapInfo;
 
 			descWrites[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 			descWrites[6].dstSet = descriptorSets[i];
-			descWrites[6].dstBinding = 6;
+			descWrites[6].dstBinding = 8;
 			descWrites[6].dstArrayElement = 0;
 			descWrites[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 			descWrites[6].descriptorCount = 1;
-			descWrites[6].pImageInfo = &emissiveImageInfo;
-
+			descWrites[6].pImageInfo = &diffuseCubemapInfo;
+			
 			descWrites[7].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 			descWrites[7].dstSet = descriptorSets[i];
-			descWrites[7].dstBinding = 7;
+			descWrites[7].dstBinding = 9;
 			descWrites[7].dstArrayElement = 0;
 			descWrites[7].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 			descWrites[7].descriptorCount = 1;
-			descWrites[7].pImageInfo = &cubemapInfo;
+			descWrites[7].pImageInfo = &prefilterCubemapInfo;
 
 			descWrites[8].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 			descWrites[8].dstSet = descriptorSets[i];
-			descWrites[8].dstBinding = 8;
+			descWrites[8].dstBinding = 10;
 			descWrites[8].dstArrayElement = 0;
 			descWrites[8].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 			descWrites[8].descriptorCount = 1;
-			descWrites[8].pImageInfo = &diffuseCubemapInfo;
+			descWrites[8].pImageInfo = &brdfInfo;
+
+			uint32_t writeCount = 9;
 
 			descWrites[9].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 			descWrites[9].dstSet = descriptorSets[i];
-			descWrites[9].dstBinding = 9;
+			descWrites[9].dstBinding = 5;
 			descWrites[9].dstArrayElement = 0;
 			descWrites[9].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 			descWrites[9].descriptorCount = 1;
-			descWrites[9].pImageInfo = &prefilterCubemapInfo;
-
+			descWrites[9].pImageInfo = &occlusionImageInfo;
+			if (model.mat.isOcclusionTexPresent) writeCount++;
+			
 			descWrites[10].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 			descWrites[10].dstSet = descriptorSets[i];
-			descWrites[10].dstBinding = 10;
+			descWrites[10].dstBinding = 6;
 			descWrites[10].dstArrayElement = 0;
 			descWrites[10].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 			descWrites[10].descriptorCount = 1;
-			descWrites[10].pImageInfo = &brdfInfo;
+			descWrites[10].pImageInfo = &emissiveImageInfo;
+			if (model.mat.isEmissiveTexPresent) writeCount++;
 
-			vkUpdateDescriptorSets(device, static_cast<uint32_t>(descWrites.size()), descWrites.data(), 0, nullptr);
+			vkUpdateDescriptorSets(device, writeCount, descWrites.data(), 0, nullptr);
 		}
 	}
 
