@@ -9,7 +9,6 @@ layout(location = 1) in vec3 normal;
 layout(location = 2) in vec2 texCoord;
 layout(location = 3) in vec3 worldPos;
 layout(location = 4) in vec3 camPos;
-layout(location = 5) in mat3 TBN;
 
 layout(binding = 2) uniform sampler2D baseColorTex;
 layout(binding = 3) uniform sampler2D metallicRoughness;
@@ -95,54 +94,22 @@ void main(){
 
 	vec3 F0 = mix(vec3(0.04), baseColor, metallic);
 	
+	vec2 uv_dx = dFdx(texCoord);
+	vec2 uv_dy = dFdy(texCoord);
+
+	vec3 T = (uv_dy.t * dFdx(pos) - uv_dx.t * dFdy(pos)) / (uv_dx.s * uv_dy.t - uv_dy.s * uv_dx.t);
+	vec3 N = normalize(normal);
+	T = normalize(T - dot(T, N) * N);
+	vec3 B = cross(N, T);
+	mat3 TBN_frag = mat3(T, B, N);
+
 	vec3 n = pow(texture(normals, texCoord).rgb, vec3(2.2));
-	n = normalize(TBN * n);
+	n = normalize(TBN_frag * n);
 
 	
 	vec3 v = normalize(camPos - worldPos);
 
 	vec3 Lo = vec3(0.0);
-
-	/*
-	vec3 lights[4] = vec3[4](
-							0.5 * vec3(-10.0, 10.0, 10.0),
-							0.5 * vec3( 10.0,-10.0, 10.0),
-							0.5 * vec3( 10.0, 10.0,-10.0),
-							0.5 * vec3( 10.0,-10.0,-10.0)
-					);
-	//debugPrintfEXT("Camera position in shader: %f %f %f\n", camPos.x, camPos.y, camPos.z);
-
-	//per light shit
-	for(int i = 0; i < 4; i++){
-		vec3 l = normalize(lights[i] - worldPos);
-		vec3 h = normalize(v + l);
-
-		float distance = length(lights[i] - worldPos);
-		float attenuation = 1.0 / (distance * distance);
-		vec3 radiance = vec3(30.0) * attenuation;
-
-		//calculate brdf terms
-		float D = D_GGX(n, h, roughness);
-		float G = G_Smith(n, v, l, roughness);
-		vec3 F = F_Schlick(max(dot(h, v), 0.0), F0);
-
-		vec3 numer = D * G * F;
-		float denom = 4 * max(dot(n, v), 0.0) * max(dot(n, l), 0.0) + 0.0001;
-		vec3 specular = numer / denom;
-
-		vec3 kS = F;
-		vec3 kD = vec3(1.0) - kS;
-		kD *= 1.0 - metallic;
-
-		Lo += ((kD * baseColor / M_PI) + specular) * radiance * max(dot(n, l), 0.0);
-	}
-	
-	vec3 kS = F_SchlickLagarde(max(dot(n, v), 0.0), F0, roughness);
-	vec3 kD = 1.0 - kS;
-	vec3 irradiance = texture(irradianceCubemap, n).rgb;
-	vec3 diffuse = irradiance * baseColor;
-	vec3 ambient = kD * diffuse * ao;
-	*/
 
 	vec3 F = F_SchlickLagarde(max(dot(n, v), 0.0), F0, roughness);
 

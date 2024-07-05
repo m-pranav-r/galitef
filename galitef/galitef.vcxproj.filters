@@ -74,5 +74,7 @@
     <None Include="shader\make-brdf\compile.bat">
       <Filter>Source Files</Filter>
     </None>
+    <None Include="shader\pbr\shader-no-tangents.vert" />
+    <None Include="shader\pbr\shader-no-tangents.frag" />
   </ItemGroup>
 </Project>

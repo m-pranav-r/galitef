@@ -16,7 +16,7 @@ Launch through command line with first two arguments specifying the viewport wid
 
 ## In-viewport Usage Commands
 
-- WASD for flycam movement
+- WASD for flycam movement along with Q and E for vertical control
 - Mouse for camera movement
 - Esc to exit
 
@@ -30,3 +30,4 @@ galitef.exe 1280 720 ./models/WaterBottle.glb ./hdri/metro_noord_4k.hdr
 
 - Make renderer fully compliant with glTF standards
 - Add pre-made cubemap usage functionality
+- Create solution for dealing with models where the normal map is accompanied by no tangents

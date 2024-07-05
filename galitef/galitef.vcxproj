@@ -108,14 +108,14 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\VulkanSDK\1.3.283.0\Include;C:\Users\%username%\Documents\Visual Studio 2022\Libraries\glfw-3.3.9.bin.WIN64\include;C:\Users\%username%\Documents\Visual Studio 2022\Libraries\stb-master;C:\Users\%username%\Documents\Visual Studio 2022\Libraries\glm;C:\Users\%username%\Documents\Visual Studio 2022\Libraries\fastgltf-0.7.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\VulkanSDK\1.3.283.0\Include;C:\Users\%username%\Documents\Visual Studio 2022\Libraries\glfw-3.3.9.bin.WIN64\include;C:\Users\%username%\Documents\Visual Studio 2022\Libraries\stb-master;C:\Users\%username%\Documents\Visual Studio 2022\Libraries\glm;C:\Users\%username%\Documents\Visual Studio 2022\Libraries\fastgltf-0.7.2\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalDependencies>vulkan-1.lib;glfw3.lib;fastgltf.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>C:\Users\%username%\Documents\Visual Studio 2022\Libraries\fastgltf-0.7.1\lib;C:\Users\%username%\Documents\Visual Studio 2022\Libraries\glfw-3.3.9.bin.WIN64\lib-vc2022;C:\VulkanSDK\1.3.283.0\Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>C:\Users\Pranay\Documents\Visual Studio 2022\Libraries\fastgltf-0.7.2\gen\Debug;C:\Users\%username%\Documents\Visual Studio 2022\Libraries\glfw-3.3.9.bin.WIN64\lib-vc2022;C:\VulkanSDK\1.3.283.0\Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -173,6 +173,8 @@
     <None Include="shader\make-prefiltermap\prefilter.vert.spv" />
     <None Include="shader\pbr\compile.bat" />
     <None Include="shader\pbr\frag.spv" />
+    <None Include="shader\pbr\shader-no-tangents.frag" />
+    <None Include="shader\pbr\shader-no-tangents.vert" />
     <None Include="shader\pbr\shader.frag" />
     <None Include="shader\pbr\shader.vert" />
     <None Include="shader\pbr\vert.spv" />

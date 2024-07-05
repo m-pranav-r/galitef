@@ -9,6 +9,22 @@
 #include "app/app.h"
 
 int main(int argc, char* argv[]) {
+#ifdef _DEBUG
+	
+	try {
+		GLTFParser model;
+		model.parse("./models/WaterBottle.glb");
+		GalitefApp app(1280, 720, model.model);
+		app.run("./hdri/hangar_interior_4k.hdr");
+	}
+	catch (const std::exception& e) {
+		std::cerr << e.what() << std::endl;
+		return EXIT_FAILURE;
+	}
+
+	return EXIT_SUCCESS;
+#else
+
 	for (int i = 0; i < argc; i++) {
 		std::cout << argv[i] << " \n";
 	}
@@ -27,4 +43,5 @@ int main(int argc, char* argv[]) {
 	}
 
 	return EXIT_SUCCESS;
+#endif
 }

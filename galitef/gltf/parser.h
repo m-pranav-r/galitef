@@ -75,7 +75,7 @@ public:
 		auto& byteView = std::get<fastgltf::sources::ByteView>(buffer.data);
 		int requiredChannels = 4;
 		pixels = stbi_load_from_memory((stbi_uc*)byteView.bytes.data() + bufferView.byteOffset, bufferView.byteLength, &texWidth, &texHeight, &texChannels, requiredChannels);
-		if (stbi_failure_reason()) {
+		if (!pixels) {
 			//stbi__jpeg_load((stbi_uc*)byteView.bytes.data() + bufferView.byteOffset, bufferView.byteLength, &texWidth, &texHeight, &texChannels, requiredChannels);
 			//stbi_memory
 			std::cout << "... error! detected channels: " << texChannels << ", requested channels: " << requiredChannels << "\n"
@@ -108,6 +108,8 @@ public:
 	std::vector<glm::vec4> tangents;
 	std::vector<glm::vec2> texCoords;
 	Material mat;
+	bool hasTangents = false;
+	fastgltf::TRS transformData;
 };
 
 class GLTFParser {
@@ -198,6 +200,9 @@ public:
 			if (skinIndex.has_value()) std::cout << "skin present...\n";
 			if (lightIndex.has_value()) std::cout << "light present...\n";
 
+			//compute trs matrix
+			model.transformData = std::get<fastgltf::TRS>(currNode.transform);
+
 			std::cout << "\nNODE DATA COMPLETE.\n";
 
 			if (meshIndex.has_value()) {
@@ -226,6 +231,7 @@ public:
 							fastgltf::iterateAccessor<glm::vec4>(asset, accessor, [&](glm::vec4 index) {
 								model.tangents[idx++] = index;
 								});
+							model.hasTangents = true;
 							
 						}
 						else if (attrib.first == "POSITION") {

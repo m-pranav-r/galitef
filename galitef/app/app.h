@@ -304,7 +304,7 @@ private:
 	VkCommandPool commandPool;
 	VkCommandPool transferPool;
 	std::vector<Vertex> vertices;
-	std::vector<uint32_t> *indices;
+	std::vector<uint32_t> indices;
 	VkBuffer vertexBuffer;
 	VkDeviceMemory vertexBufferMemory;
 	VkBuffer indexBuffer;
@@ -413,6 +413,8 @@ private:
 	void* offscreenUniformBufferMapped;
 
 	VkDescriptorSet cubemapDescriptorSet, diffuseCubemapDescriptorSet;
+
+	glm::mat4 TRS;
 
 	std::vector<VkCommandBuffer> commandBuffers;
 	std::vector<VkSemaphore >imageAvailableSemaphores;
@@ -890,8 +892,15 @@ private:
 	}
 
 	void createGraphicsPipeline() {
-		auto vertShaderCode = readFile("shader/pbr/vert.spv");
-		auto fragShaderCode = readFile("shader/pbr/frag.spv");
+		std::vector<char> vertShaderCode, fragShaderCode;
+		if (model.hasTangents) {
+			vertShaderCode = readFile("shader/pbr/vert.spv");
+			fragShaderCode = readFile("shader/pbr/frag.spv");
+		}
+		else {
+			vertShaderCode = readFile("shader/pbr/vert-no-tangents.spv");
+			fragShaderCode = readFile("shader/pbr/frag-no-tangents.spv");
+		}
 
 		VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
 		VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
@@ -4399,12 +4408,25 @@ private:
 
 			vertex.pos = model.pos[i];
 			vertex.normal = model.normals[i];
-			vertex.tangent = model.tangents[i];
+			if (model.hasTangents) vertex.tangent = model.tangents[i];
+			else vertex.tangent = glm::vec4(0.0);
 			vertex.texCoord = model.texCoords[i];
 
 			vertices.push_back(vertex);
 		}
-		indices = &model.indices;
+		for (int i = 0; i < model.indices.size(); i++) {
+			indices.push_back(model.indices[i]);
+		}
+
+		glm::mat4 S = glm::scale(glm::mat4(1.0), glm::vec3(model.transformData.scale[0], model.transformData.scale[1], model.transformData.scale[2]));
+
+		glm::mat4 R = glm::mat4_cast(glm::quat(model.transformData.rotation[3], model.transformData.rotation[0], model.transformData.rotation[1], model.transformData.rotation[2]));
+
+		TRS = glm::translate(S * R, glm::vec3(model.transformData.translation[0], model.transformData.translation[1], model.transformData.translation[2]));
+		//glm::mat4 R = glm::rotate(glm::mat4(1.0), glm::vec4(model.transformData.rotation[0], model.transformData.rotation[1], model.transformData.rotation[2], model.transformData.rotation[3])));
+		//glm::mat4 R = glm::rotate(glm::mat4(1.0f), )
+
+		//indices = &model.indices;
 		std::cout << " done!\n";
 	}
 
@@ -4480,7 +4502,7 @@ private:
 	}
 
 	void createIndexBuffer() {
-		VkDeviceSize bufferSize = sizeof(indices[0]) * indices->size();
+		VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
 
 		VkBuffer stagingBuffer;
 		VkDeviceMemory stagingBufferMemory;
@@ -4493,8 +4515,21 @@ private:
 		);
 
 		void* data;
-		vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-		memcpy(data, indices->data(), (size_t)bufferSize);
+		VkResult indexMapResult = vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+		if (indexMapResult != VK_SUCCESS) {
+			throw std::runtime_error("failed to map index buffer!");
+		}
+		assert(bufferSize == sizeof(indices[0]) * indices.size());
+		memcpy(data, indices.data(), (size_t)bufferSize);
+
+		//try copying memory in chunks
+		
+		/*
+		const int MEMORY_CHUNKS_SPLIT_SIZE = 2;
+		for (int i = 0; i < MEMORY_CHUNKS_SPLIT_SIZE; i++) {
+			memcpy(reinterpret_cast<void*>(&data + (bufferSize * i / MEMORY_CHUNKS_SPLIT_SIZE)), reinterpret_cast<void*>(indices->data() + (bufferSize * i / MEMORY_CHUNKS_SPLIT_SIZE)), (size_t)bufferSize / MEMORY_CHUNKS_SPLIT_SIZE);
+		}
+		*/
 		vkUnmapMemory(device, stagingBufferMemory);
 
 		createBuffer(
@@ -4899,7 +4934,7 @@ private:
 		vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
 		vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
-		vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices->size()), 1, 0, 0, 0);
+		vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 
 		vkCmdEndRendering(commandBuffer);
 
@@ -5032,9 +5067,9 @@ private:
 		camera.update();
 
 		UniformBufferObject ubo{};
-		ubo.model = glm::scale(glm::mat4(1.0f), glm::vec3(10.0f));
+		ubo.model = TRS;
 		ubo.view = camera.getViewMatrix();
-		ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 10.0f);
+		ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.01f, 100.0f);
 		ubo.proj[1][1] *= -1;
 		ubo.camPos = camera.position;
 
