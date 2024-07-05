@@ -2,6 +2,8 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include "../gltf/parser.h"
+
 #ifndef GLM_H
 #define GLM_H
 #define GLM_FORCE_RADIANS
@@ -10,18 +12,7 @@
 #include <glm.hpp>
 #include <gtc/matrix_transform.hpp>
 #include <gtx/hash.hpp>
-#include <glm/gtx/quaternion.hpp>
-#endif
-
-#ifndef PARSER_H
-#define PARSER_H
-#include "../gltf/parser.h"
-#endif
-
-#ifndef STB_H
-#define STB_H
-#define STB_IMAGE_IMPLEMENTATION
-#include <stb_image.h>
+#include <gtx/quaternion.hpp>
 #endif
 
 #include <chrono>

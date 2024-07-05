@@ -1,19 +1,11 @@
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
-
-#ifndef PARSER_H
-#define PARSER_H
-#include "gltf/parser.h"
-#endif
-
-#include "app/app.h"
+#include "app/app.hpp"
 
 int main(int argc, char* argv[]) {
 #ifdef _DEBUG
 	
 	try {
 		GLTFParser model;
-		model.parse("./models/WaterBottle.glb");
+		model.parse("./models/DamagedHelmet.glb");
 		GalitefApp app(1280, 720, model.model);
 		app.run("./hdri/hangar_interior_4k.hdr");
 	}
